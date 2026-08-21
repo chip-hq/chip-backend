@@ -1,0 +1,19 @@
+# Dependencies
+node_modules/
+
+# Environment variables & secrets
+.env
+.env.*
+!.env.example
+
+# Production & Build outputs
+dist/
+build/
+.pio/
+
+# Logs
+*.log
+logs/
+
+# System files
+.DS_Store
