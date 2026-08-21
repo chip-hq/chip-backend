@@ -3,6 +3,10 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import { createServer } from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
+import { readFile } from 'fs/promises';
+import { existsSync } from 'fs';
+import { join } from 'path';
+import { homedir } from 'os';
 import {
   initStorage,
   closeStorage,
@@ -131,16 +135,30 @@ app.get('/api/devices', async (req, res) => {
 
 // Trigger flash job (used by MCP flash_device or manual API)
 app.post('/api/flash', async (req, res) => {
-  const { deviceId = 'default_device', offset = '0x10000', binBase64, jobId: compileJobId, filename = 'firmware.bin' } = req.body;
-
   let payloadBase64 = binBase64;
-  if (!payloadBase64 && compileJobId) {
+  // If jobId was passed in binBase64 field (e.g. "compile_...")
+  if (payloadBase64 && payloadBase64.startsWith('compile_')) {
+    const compileJob = await getJob(payloadBase64);
+    payloadBase64 = compileJob?.binBase64;
+  } else if (!payloadBase64 && compileJobId) {
     const compileJob = await getJob(compileJobId);
     payloadBase64 = compileJob?.binBase64;
   }
 
+  // Fallback to latest compiled binary on disk if memory is empty
   if (!payloadBase64) {
-    return res.status(400).json({ error: 'Either "binBase64" or a valid "jobId" from compile_firmware is required' });
+    try {
+      const diskBin = join(homedir(), '.chip-build-cache', 'esp32dev', '.pio', 'build', 'target', 'firmware.bin');
+      if (existsSync(diskBin)) {
+        payloadBase64 = (await readFile(diskBin)).toString('base64');
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  if (!payloadBase64) {
+    return res.status(400).json({ error: 'No compiled binary found. Please run compile_firmware first.' });
   }
 
   // Resolve the target socket: the named device, else the first live one
