@@ -131,18 +131,23 @@ app.get('/api/devices', async (req, res) => {
 
 // Trigger flash job (used by MCP flash_device or manual API)
 app.post('/api/flash', async (req, res) => {
-  const { deviceId = 'default_device', offset = '0x10000', binBase64, filename = 'firmware.bin' } = req.body;
+  const { deviceId = 'default_device', offset = '0x10000', binBase64, jobId: compileJobId, filename = 'firmware.bin' } = req.body;
 
-  if (!binBase64) {
-    return res.status(400).json({ error: 'binBase64 is required' });
+  let payloadBase64 = binBase64;
+  if (!payloadBase64 && compileJobId) {
+    const compileJob = await getJob(compileJobId);
+    payloadBase64 = compileJob?.binBase64;
+  }
+
+  if (!payloadBase64) {
+    return res.status(400).json({ error: 'Either "binBase64" or a valid "jobId" from compile_firmware is required' });
   }
 
   // Resolve the target socket: the named device, else the first live one
-  // (single-user convenience — one board on one desk).
   let targetId = deviceId;
   let socket = deviceSockets.get(deviceId);
   if (!socket) {
-    const first = deviceSockets.entries().next().value; // [id, ws] | undefined
+    const first = deviceSockets.entries().next().value;
     if (first) [targetId, socket] = first;
   }
 
@@ -150,9 +155,9 @@ app.post('/api/flash', async (req, res) => {
     return res.status(404).json({ error: `No active browser connected for device "${deviceId}"` });
   }
 
-  const jobId = `job_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+  const flashJobId = `flash_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
   createJob({
-    jobId,
+    jobId: flashJobId,
     deviceId: targetId,
     filename,
     offset,
@@ -165,15 +170,15 @@ app.post('/api/flash', async (req, res) => {
   socket.send(
     JSON.stringify({
       type: 'flash_payload',
-      jobId,
+      jobId: flashJobId,
       filename,
       offset,
-      binBase64,
+      binBase64: payloadBase64,
     })
   );
 
   res.json({
-    jobId,
+    jobId: flashJobId,
     status: 'started',
     message: `Firmware relayed to browser dashboard for ${targetId}`,
   });
@@ -225,6 +230,8 @@ app.post('/api/compile', async (req, res) => {
     updateJob(jobId, {
       status: 'done',
       progress: 100,
+      binBase64: result.binBase64,
+      binSize: result.binSize,
       logLine: `Done — ${result.binSize} bytes in ${(result.durationMs / 1000).toFixed(1)}s`,
     });
 
