@@ -36,6 +36,9 @@ const deviceSockets = new Map();
 wss.on('connection', (ws, req) => {
   let deviceId = 'default_device';
 
+  // Immediately register socket so it is visible to /api/devices and flash relays
+  deviceSockets.set(deviceId, ws);
+  upsertDevice({ deviceId, chip: 'ESP32', connected: true });
   console.log(`[WS] New client connection from ${req.socket.remoteAddress}`);
 
   ws.on('message', (message) => {
@@ -87,8 +90,6 @@ wss.on('connection', (ws, req) => {
 
   ws.on('close', () => {
     console.log(`[WS] Connection closed for ${deviceId}`);
-    // Only forget the socket if it's still the one we have registered — a fast
-    // reconnect may have already replaced it under the same deviceId.
     if (deviceSockets.get(deviceId) === ws) {
       deviceSockets.delete(deviceId);
     }
@@ -111,15 +112,21 @@ app.get('/health', (req, res) => {
   });
 });
 
-// List known browser devices (used by MCP list_devices). Metadata comes from
-// storage; `connected` is overridden with whether a live socket exists in THIS
-// process, which is what actually determines flashability.
+// List known browser devices (used by MCP list_devices).
 app.get('/api/devices', async (req, res) => {
-  const devices = (await listDevices()).map((d) => ({
-    ...d,
-    connected: deviceSockets.has(d.deviceId),
-  }));
-  res.json({ devices });
+  const stored = await listDevices();
+  const storedMap = new Map(stored.map((d) => [d.deviceId, d]));
+
+  // Ensure every active WebSocket connection is included with connected: true
+  for (const [id] of deviceSockets.entries()) {
+    if (storedMap.has(id)) {
+      storedMap.get(id).connected = true;
+    } else {
+      storedMap.set(id, { deviceId: id, chip: 'ESP32', connected: true });
+    }
+  }
+
+  res.json({ devices: Array.from(storedMap.values()) });
 });
 
 // Trigger flash job (used by MCP flash_device or manual API)
