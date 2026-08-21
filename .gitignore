@@ -4,7 +4,7 @@ node_modules/
 # Environment variables & secrets
 .env
 .env.*
-!.env.example
+.env.example
 
 # Production & Build outputs
 dist/

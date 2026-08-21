@@ -4,7 +4,12 @@ services:
     env: node
     region: oregon
     plan: free
-    buildCommand: npm install
+    # Install PlatformIO (the ESP32 compile toolchain) alongside Node deps.
+    # pio.exe will be in the system PATH on Render's Linux build machines.
+    # The ESP32 toolchain itself (~500 MB) is downloaded by PlatformIO on the
+    # first compile and cached in ~/.platformio — it persists for the life of
+    # the dyno (gone on redeploy/restart, re-downloads automatically).
+    buildCommand: pip install platformio && npm install
     startCommand: npm start
     envVars:
       - key: NODE_ENV
