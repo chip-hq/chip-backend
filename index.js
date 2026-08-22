@@ -138,15 +138,19 @@ app.get('/api/devices', async (req, res) => {
 
 // Trigger flash job (used by MCP flash_device or manual API)
 app.post('/api/flash', async (req, res) => {
-  const { jobId: compileJobId, binBase64: rawBase64, deviceId = 'default_device', offset = '0x10000', filename = 'firmware.bin' } = req.body ?? {};
+  const { jobId: compileJobId, binBase64: rawBase64, deviceId = 'default_device', offset: requestedOffset, filename = 'firmware.bin' } = req.body ?? {};
   let payloadBase64 = rawBase64;
+  let targetOffset = requestedOffset;
+
   // If jobId was passed in binBase64 field (e.g. "compile_...")
   if (payloadBase64 && payloadBase64.startsWith('compile_')) {
     const compileJob = await getJob(payloadBase64);
     payloadBase64 = compileJob?.binBase64;
+    targetOffset = targetOffset || compileJob?.offset || '0x0';
   } else if (!payloadBase64 && compileJobId) {
     const compileJob = await getJob(compileJobId);
     payloadBase64 = compileJob?.binBase64;
+    targetOffset = targetOffset || compileJob?.offset || '0x0';
   }
 
   // Fallback to latest compiled binary on disk if memory is empty
@@ -166,6 +170,8 @@ app.post('/api/flash', async (req, res) => {
   if (!payloadBase64) {
     return res.status(400).json({ error: 'No compiled binary found. Please run compile_firmware first.' });
   }
+
+  const offset = targetOffset || '0x0';
 
   // Resolve the target socket: the named device, else the first live one
   let targetId = deviceId;
@@ -204,6 +210,7 @@ app.post('/api/flash', async (req, res) => {
   res.json({
     jobId: flashJobId,
     status: 'started',
+    offset,
     message: `Firmware relayed to browser dashboard for ${targetId}`,
   });
 });
@@ -256,6 +263,7 @@ app.post('/api/compile', async (req, res) => {
       progress: 100,
       binBase64: result.binBase64,
       binSize: result.binSize,
+      offset: result.offset || '0x0',
       logLine: `Done — ${result.binSize} bytes in ${(result.durationMs / 1000).toFixed(1)}s`,
     });
 
@@ -267,13 +275,14 @@ app.post('/api/compile', async (req, res) => {
       // non-fatal
     }
 
-    console.log(`[COMPILE] Job ${jobId} done — ${result.binSize} bytes`);
+    console.log(`[COMPILE] Job ${jobId} done — ${result.binSize} bytes (@ ${result.offset || '0x0'})`);
 
     return res.json({
       jobId,
       status: 'done',
       binBase64: result.binBase64,
       binSize: result.binSize,
+      offset: result.offset || '0x0',
       durationMs: result.durationMs,
       log: result.log,
     });

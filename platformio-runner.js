@@ -193,13 +193,39 @@ export async function compileFirmware({
       throw new Error('Compile succeeded but firmware.bin not found in .pio/build/target/');
     }
 
-    const binBuf = await readFile(binPath);
-    const binBase64 = binBuf.toString('base64');
+    const firmwareBuf = await readFile(binPath);
+    const bootloaderPath = join(projectDir, '.pio', 'build', 'target', 'bootloader.bin');
+    const partitionsPath = join(projectDir, '.pio', 'build', 'target', 'partitions.bin');
+
+    let finalBuf = firmwareBuf;
+    let flashOffset = '0x10000';
+
+    // If bootloader and partition table exist, produce a complete merged image starting at 0x0
+    // This guarantees the ESP32 will boot and run even on completely erased chips!
+    if (existsSync(bootloaderPath) && existsSync(partitionsPath)) {
+      try {
+        const bootloaderBuf = await readFile(bootloaderPath);
+        const partitionsBuf = await readFile(partitionsPath);
+        const mergedSize = 0x10000 + firmwareBuf.length;
+        const mergedBuf = Buffer.alloc(mergedSize, 0xff);
+        bootloaderBuf.copy(mergedBuf, 0x1000);
+        partitionsBuf.copy(mergedBuf, 0x8000);
+        firmwareBuf.copy(mergedBuf, 0x10000);
+
+        finalBuf = mergedBuf;
+        flashOffset = '0x0';
+        emit(`[COMPILE] Built complete self-booting merged image (${mergedBuf.length} bytes @ 0x0)`);
+      } catch (err) {
+        emit(`[COMPILE] Note: Merging bootloader skipped: ${err.message}`);
+      }
+    }
+
+    const binBase64 = finalBuf.toString('base64');
     const durationMs = Date.now() - startMs;
 
-    emit(`[COMPILE] Done — ${binBuf.length} bytes in ${(durationMs / 1000).toFixed(1)}s`);
+    emit(`[COMPILE] Done — ${finalBuf.length} bytes in ${(durationMs / 1000).toFixed(1)}s`);
 
-    return { binBase64, binSize: binBuf.length, durationMs, log };
+    return { binBase64, binSize: finalBuf.length, offset: flashOffset, durationMs, log };
   } finally {
     // Keep projectDir intact so .pio build cache persists for instant re-compilations!
   }
