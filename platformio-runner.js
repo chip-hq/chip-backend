@@ -64,19 +64,18 @@ const WINDOWS_PIO_CANDIDATES = [
  */
 async function resolvePio() {
   if (process.platform !== 'win32') {
-    // -j 1 ensures single-thread compilation to stay strictly within 512MB RAM on free cloud instances
-    return { cmd: 'pio', args: ['run', '-j', '1'] };
+    return { cmd: 'pio', args: ['run'] };
   }
   for (const candidate of WINDOWS_PIO_CANDIDATES) {
     try {
       await access(candidate, constants.X_OK);
-      return { cmd: candidate, args: ['run', '-j', '1'] };
+      return { cmd: candidate, args: ['run'] };
     } catch {
       // not found or not executable — try next
     }
   }
   // Last resort: invoke via cmd so PATH is re-evaluated by the shell
-  return { cmd: 'cmd', args: ['/c', 'pio', 'run', '-j', '1'] };
+  return { cmd: 'cmd', args: ['/c', 'pio', 'run'] };
 }
 
 
