@@ -3,10 +3,13 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import { createServer } from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
-import { readFile } from 'fs/promises';
+import { readFile, writeFile, mkdir } from 'fs/promises';
 import { existsSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
+
+const FIRMWARE_CACHE_PATH = join(homedir(), '.chip-build-cache', 'esp32dev', '.pio', 'build', 'esp32dev', 'firmware.bin');
+const FIRMWARE_B64_CACHE = join(homedir(), '.chip-build-cache', 'last_firmware.b64');
 import {
   initStorage,
   closeStorage,
@@ -149,9 +152,11 @@ app.post('/api/flash', async (req, res) => {
   // Fallback to latest compiled binary on disk if memory is empty
   if (!payloadBase64) {
     try {
-      const diskBin = join(homedir(), '.chip-build-cache', 'esp32dev', '.pio', 'build', 'target', 'firmware.bin');
-      if (existsSync(diskBin)) {
-        payloadBase64 = (await readFile(diskBin)).toString('base64');
+      // Try the saved base64 cache first (fastest)
+      if (existsSync(FIRMWARE_B64_CACHE)) {
+        payloadBase64 = await readFile(FIRMWARE_B64_CACHE, 'utf8');
+      } else if (existsSync(FIRMWARE_CACHE_PATH)) {
+        payloadBase64 = (await readFile(FIRMWARE_CACHE_PATH)).toString('base64');
       }
     } catch {
       // ignore
@@ -253,6 +258,14 @@ app.post('/api/compile', async (req, res) => {
       binSize: result.binSize,
       logLine: `Done — ${result.binSize} bytes in ${(result.durationMs / 1000).toFixed(1)}s`,
     });
+
+    // Persist binary to disk so it survives container restarts
+    try {
+      await mkdir(join(homedir(), '.chip-build-cache'), { recursive: true });
+      await writeFile(FIRMWARE_B64_CACHE, result.binBase64, 'utf8');
+    } catch {
+      // non-fatal
+    }
 
     console.log(`[COMPILE] Job ${jobId} done — ${result.binSize} bytes`);
 
