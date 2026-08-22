@@ -146,11 +146,11 @@ app.post('/api/flash', async (req, res) => {
   if (payloadBase64 && payloadBase64.startsWith('compile_')) {
     const compileJob = await getJob(payloadBase64);
     payloadBase64 = compileJob?.binBase64;
-    targetOffset = targetOffset || compileJob?.offset || '0x0';
+    targetOffset = compileJob?.offset || targetOffset || '0x0';
   } else if (!payloadBase64 && compileJobId) {
     const compileJob = await getJob(compileJobId);
     payloadBase64 = compileJob?.binBase64;
-    targetOffset = targetOffset || compileJob?.offset || '0x0';
+    targetOffset = compileJob?.offset || targetOffset || '0x0';
   }
 
   // Fallback to latest compiled binary on disk if memory is empty
