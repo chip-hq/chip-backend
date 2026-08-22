@@ -135,7 +135,8 @@ app.get('/api/devices', async (req, res) => {
 
 // Trigger flash job (used by MCP flash_device or manual API)
 app.post('/api/flash', async (req, res) => {
-  let payloadBase64 = binBase64;
+  const { jobId: compileJobId, binBase64: rawBase64, deviceId = 'default_device', offset = '0x10000', filename = 'firmware.bin' } = req.body ?? {};
+  let payloadBase64 = rawBase64;
   // If jobId was passed in binBase64 field (e.g. "compile_...")
   if (payloadBase64 && payloadBase64.startsWith('compile_')) {
     const compileJob = await getJob(payloadBase64);
