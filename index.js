@@ -20,8 +20,10 @@ import {
   createJob,
   getJob,
   updateJob,
+  listJobs,
 } from './storage.js';
 import { compileFirmware } from './platformio-runner.js';
+import { extractUser } from './auth.js';
 
 dotenv.config();
 
@@ -30,6 +32,7 @@ const PORT = process.env.PORT || 3000;
 
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
+app.use(extractUser);
 
 const server = createServer(app);
 const wss = new WebSocketServer({ server });
@@ -55,14 +58,16 @@ wss.on('connection', (ws, req) => {
       // Registration message from browser dashboard
       if (data.type === 'register') {
         deviceId = data.deviceId || 'default_device';
+        const userId = data.userId || data.uid || null;
         deviceSockets.set(deviceId, ws);
         upsertDevice({
           deviceId,
           chip: data.chip || 'ESP32',
           connected: data.connected ?? true,
+          userId,
         });
-        console.log(`[WS] Device registered: ${deviceId} (${data.chip || 'ESP32'})`);
-        ws.send(JSON.stringify({ type: 'registered', deviceId, status: 'ok' }));
+        console.log(`[WS] Device registered: ${deviceId} (${data.chip || 'ESP32'})${userId ? ` [User: ${userId}]` : ''}`);
+        ws.send(JSON.stringify({ type: 'registered', deviceId, userId, status: 'ok' }));
       }
 
       // Progress updates from browser flasher
@@ -119,16 +124,17 @@ app.get('/health', (req, res) => {
   });
 });
 
-// List known browser devices (used by MCP list_devices).
+// List known browser devices (used by MCP list_devices or frontend).
 app.get('/api/devices', async (req, res) => {
-  const stored = await listDevices();
+  const targetUserId = req.userId || req.query.userId || null;
+  const stored = await listDevices(targetUserId);
   const storedMap = new Map(stored.map((d) => [d.deviceId, d]));
 
   // Ensure every active WebSocket connection is included with connected: true
   for (const [id] of deviceSockets.entries()) {
     if (storedMap.has(id)) {
       storedMap.get(id).connected = true;
-    } else {
+    } else if (!targetUserId) {
       storedMap.set(id, { deviceId: id, chip: 'ESP32', connected: true });
     }
   }
@@ -186,8 +192,11 @@ app.post('/api/flash', async (req, res) => {
   }
 
   const flashJobId = `flash_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+  const userId = req.userId || req.body?.userId || null;
+
   createJob({
     jobId: flashJobId,
+    userId,
     deviceId: targetId,
     filename,
     offset,
@@ -215,6 +224,13 @@ app.post('/api/flash', async (req, res) => {
   });
 });
 
+// List jobs (optionally filtered by logged-in user or userId query param)
+app.get('/api/jobs', async (req, res) => {
+  const targetUserId = req.userId || req.query.userId || null;
+  const jobs = await listJobs(targetUserId);
+  res.json({ jobs });
+});
+
 // Get flash job status (used by MCP get_status)
 app.get('/api/jobs/:jobId', async (req, res) => {
   const job = await getJob(req.params.jobId);
@@ -236,9 +252,11 @@ app.post('/api/compile', async (req, res) => {
   }
 
   const jobId = `compile_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+  const userId = req.userId || req.body?.userId || null;
 
   createJob({
     jobId,
+    userId,
     phase: 'compile',
     board,
     status: 'compiling',

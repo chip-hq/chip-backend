@@ -75,7 +75,9 @@ export async function initStorage() {
     await db.command({ ping: 1 });
     await Promise.all([
       db.collection('jobs').createIndex({ jobId: 1 }, { unique: true }),
+      db.collection('jobs').createIndex({ userId: 1, createdAt: -1 }),
       db.collection('devices').createIndex({ deviceId: 1 }, { unique: true }),
+      db.collection('devices').createIndex({ userId: 1, deviceId: 1 }),
     ]);
 
     mongoReady = true;
@@ -105,11 +107,12 @@ export async function closeStorage() {
 
 // --- Devices -----------------------------------------------------------------
 
-export function upsertDevice({ deviceId, chip, connected = true }) {
+export function upsertDevice({ deviceId, chip, connected = true, userId = null }) {
   const now = new Date();
   const existing = memDevices.get(deviceId);
   const doc = {
     deviceId,
+    userId: userId ?? existing?.userId ?? null,
     chip: chip ?? existing?.chip ?? 'ESP32',
     connected,
     firstSeen: existing?.firstSeen ?? now,
@@ -122,7 +125,7 @@ export function upsertDevice({ deviceId, chip, connected = true }) {
       .updateOne(
         { deviceId },
         {
-          $set: { chip: doc.chip, connected, lastSeen: now },
+          $set: { chip: doc.chip, connected, lastSeen: now, userId: doc.userId },
           $setOnInsert: { deviceId, firstSeen: doc.firstSeen },
         },
         { upsert: true }
@@ -147,15 +150,17 @@ export function setDeviceConnected(deviceId, connected) {
   }
 }
 
-export async function listDevices() {
+export async function listDevices(userId = null) {
+  const query = userId ? { userId } : {};
   if (canUseMongo()) {
     try {
-      return await db.collection('devices').find({}, { projection: { _id: 0 } }).toArray();
+      return await db.collection('devices').find(query, { projection: { _id: 0 } }).toArray();
     } catch (err) {
       warn('listDevices', err);
     }
   }
-  return Array.from(memDevices.values());
+  const all = Array.from(memDevices.values());
+  return userId ? all.filter((d) => d.userId === userId) : all;
 }
 
 // --- Jobs --------------------------------------------------------------------
@@ -230,4 +235,22 @@ export function updateJob(jobId, { status, progress, error, logLine, phase } = {
 
   mirrorJob(jobId);
 }
+
+export async function listJobs(userId = null) {
+  const query = userId ? { userId } : {};
+  if (canUseMongo()) {
+    try {
+      return await db.collection('jobs')
+        .find(query, { projection: { _id: 0 } })
+        .sort({ createdAt: -1 })
+        .toArray();
+    } catch (err) {
+      warn('listJobs', err);
+    }
+  }
+  const all = Array.from(memJobs.values());
+  const filtered = userId ? all.filter((j) => j.userId === userId) : all;
+  return filtered.sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
+}
+
 
