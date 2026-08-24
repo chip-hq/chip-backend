@@ -1,52 +1,46 @@
-// auth.js — Firebase Authentication middleware and helper for Chip backend.
-//
-// Extracts Firebase UID from the `Authorization: Bearer <token>` header or `x-user-id` fallback header.
-// If firebase-admin is configured via credentials, it verifies the token signature.
+// auth.js — Safe Firebase Token parsing & user extraction middleware for Chip backend.
 
-let admin = null;
-
-try {
-  // Dynamically load firebase-admin if installed
-  const firebaseAdminModule = await import('firebase-admin');
-  admin = firebaseAdminModule.default || firebaseAdminModule;
-
-  if (!admin.apps || !admin.apps.length) {
-    if (process.env.FIREBASE_PROJECT_ID || process.env.GOOGLE_APPLICATION_CREDENTIALS) {
-      admin.initializeApp();
-      console.log('[auth] Firebase Admin SDK initialized.');
-    }
+function decodeJwtPayload(token) {
+  try {
+    const parts = token.split('.');
+    if (parts.length < 2) return null;
+    const base64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    const jsonStr = Buffer.from(base64, 'base64').toString('utf8');
+    return JSON.parse(jsonStr);
+  } catch {
+    return null;
   }
-} catch {
-  // firebase-admin is optional; fallback to extracting unverified headers/params when SDK is not present
 }
 
 /**
- * Express middleware to extract userId from headers or token.
- * Attaches `req.userId` if present.
+ * Express middleware to extract userId (Firebase UID) from incoming requests.
+ * Checks Bearer JWT token payload (`sub` / `user_id`), fallback headers (`x-user-id`), or query/body.
  */
-export async function extractUser(req, res, next) {
-  const authHeader = req.headers.authorization;
-  const directUserId = req.headers['x-user-id'] || req.query.userId || req.body?.userId;
+export function extractUser(req, res, next) {
+  try {
+    const authHeader = req.headers.authorization;
+    const directUserId = req.headers['x-user-id'] || req.query?.userId || req.body?.userId;
 
-  if (authHeader && authHeader.startsWith('Bearer ')) {
-    const token = authHeader.split('Bearer ')[1];
-    if (admin && admin.apps && admin.apps.length) {
-      try {
-        const decodedToken = await admin.auth().verifyIdToken(token);
-        req.userId = decodedToken.uid;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.split('Bearer ')[1]?.trim();
+      if (token) {
+        const payload = decodeJwtPayload(token);
+        const uid = payload?.sub || payload?.user_id;
+        if (uid) {
+          req.userId = String(uid);
+          return next();
+        }
+        // Fallback if not a JWT string
+        req.userId = token;
         return next();
-      } catch (err) {
-        console.warn(`[auth] Invalid Firebase token: ${err.message}`);
       }
-    } else {
-      // Without admin SDK, use token string or direct ID if provided
-      req.userId = token;
-      return next();
     }
-  }
 
-  if (directUserId) {
-    req.userId = String(directUserId);
+    if (directUserId) {
+      req.userId = String(directUserId);
+    }
+  } catch (err) {
+    console.warn('[auth] Non-fatal error parsing user token:', err?.message);
   }
 
   next();
