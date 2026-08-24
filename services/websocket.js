@@ -8,10 +8,19 @@ export function setupWebSocket(server) {
 
   wss.on('connection', (ws, req) => {
     let deviceId = 'default_device';
+    let userId = null;
 
+    try {
+      const url = new URL(req.url, 'http://localhost');
+      userId = url.searchParams.get('userId') || url.searchParams.get('uid') || null;
+    } catch {
+      // non-fatal
+    }
+
+    ws.userId = userId;
     deviceSockets.set(deviceId, ws);
-    upsertDevice({ deviceId, chip: 'ESP32', connected: true });
-    console.log(`[WS] New client connection from ${req.socket.remoteAddress}`);
+    upsertDevice({ deviceId, chip: 'ESP32', connected: true, userId });
+    console.log(`[WS] New client connection from ${req.socket.remoteAddress}${userId ? ` [User: ${userId}]` : ''}`);
 
     ws.on('message', (message) => {
       try {
@@ -19,7 +28,8 @@ export function setupWebSocket(server) {
 
         if (data.type === 'register') {
           deviceId = data.deviceId || 'default_device';
-          const userId = data.userId || data.uid || null;
+          userId = data.userId || data.uid || userId || null;
+          ws.userId = userId;
           deviceSockets.set(deviceId, ws);
           upsertDevice({
             deviceId,
