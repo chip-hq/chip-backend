@@ -277,12 +277,14 @@ app.get('/api/jobs', async (req, res) => {
   res.json({ jobs });
 });
 
-// Clear all jobs in history
-app.delete('/api/jobs', async (req, res) => {
+// Clear all jobs in history (supports DELETE and POST)
+const handleClearJobs = async (req, res) => {
   const targetUserId = await resolveUserId(req);
   await clearJobs(targetUserId === 'anonymous' ? null : targetUserId);
   res.json({ status: 'ok', message: 'Job history cleared' });
-});
+};
+app.delete('/api/jobs', handleClearJobs);
+app.post('/api/jobs/clear', handleClearJobs);
 
 // Get flash job status (used by MCP get_status)
 app.get('/api/jobs/:jobId', async (req, res) => {
