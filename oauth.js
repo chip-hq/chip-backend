@@ -2,14 +2,15 @@
 //
 // Flow:
 //   1. Claude hits /.well-known/oauth-authorization-server → discovers auth endpoints
-//   2. Claude redirects user to GET /oauth/authorize → user sees Google sign-in page
-//   3. User signs in with Firebase/Google → page POSTs token to /oauth/finalize
-//   4. Backend verifies token, generates short-lived auth code, redirects back to Claude
-//   5. Claude exchanges code at POST /oauth/token → receives access token (JWT)
-//   6. All subsequent MCP tool calls carry the access token → backend resolves Firebase UID
+//   2. Claude redirects user to GET /oauth/authorize
+//   3. Backend creates session and redirects to Client App (http://localhost:5173/?sessionId=...)
+//   4. Client App verifies Backend + MCP live sync and shows "Approve & Connect"
+//   5. Client POSTs Firebase token to /oauth/finalize
+//   6. Backend verifies token, generates short-lived auth code, returns redirectUrl (back to Claude)
+//   7. Claude exchanges code at POST /oauth/token → receives 30-day JWT access token
 
 import { createHmac, randomBytes } from 'crypto';
-import { Router } from 'express';
+import express, { Router } from 'express';
 
 const router = Router();
 
@@ -26,9 +27,9 @@ setInterval(() => {
   }
 }, 5 * 60 * 1000);
 
-// ── JWT Helpers (no external dependency — pure Node crypto) ──────────────────
+// ── JWT Helpers ──────────────────────────────────────────────────────────────
 
-export function signJWT(payload, expiresInSeconds = 86400) {
+export function signJWT(payload, expiresInSeconds = 86400 * 30) {
   const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url');
   const body = Buffer.from(JSON.stringify({
     ...payload,
@@ -69,10 +70,10 @@ router.get('/.well-known/oauth-authorization-server', (req, res) => {
   });
 });
 
-// ── Authorization Endpoint — serves the Google Sign-in page ──────────────────
+// ── Authorization Endpoint — redirects to the Client App for Approval ────────
 
 router.get('/oauth/authorize', (req, res) => {
-  const { redirect_uri, state, client_id } = req.query;
+  const { redirect_uri, state } = req.query;
 
   if (!redirect_uri) {
     return res.status(400).send('Missing redirect_uri');
@@ -82,150 +83,19 @@ router.get('/oauth/authorize', (req, res) => {
   pendingCodes.set(`session:${sessionId}`, {
     redirectUri: redirect_uri,
     state: state || '',
-    expires: Date.now() + 10 * 60 * 1000, // 10 min to complete sign-in
+    expires: Date.now() + 10 * 60 * 1000,
   });
 
-  const finalizeUrl = `${req.protocol}://${req.get('host')}/oauth/finalize`;
+  const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+  const clientAuthUrl = new URL(frontendUrl);
+  clientAuthUrl.searchParams.set('sessionId', sessionId);
+  clientAuthUrl.searchParams.set('redirect_uri', redirect_uri);
+  if (state) clientAuthUrl.searchParams.set('state', state);
 
-  res.send(`<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Chip – Connect to Claude</title>
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      background: #0f1117;
-      color: #e2e8f0;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      min-height: 100vh;
-    }
-    .card {
-      background: #1a1d2e;
-      border: 1px solid #2d3152;
-      border-radius: 16px;
-      padding: 40px;
-      max-width: 400px;
-      width: 90%;
-      text-align: center;
-      box-shadow: 0 20px 60px rgba(0,0,0,0.5);
-    }
-    .logo { font-size: 36px; margin-bottom: 12px; }
-    h1 { font-size: 22px; font-weight: 700; margin-bottom: 8px; color: #f0f4ff; }
-    p { font-size: 14px; color: #94a3b8; margin-bottom: 28px; line-height: 1.6; }
-    .btn {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 10px;
-      width: 100%;
-      padding: 12px 20px;
-      background: #fff;
-      color: #1a1a1a;
-      font-size: 15px;
-      font-weight: 600;
-      border: none;
-      border-radius: 10px;
-      cursor: pointer;
-      transition: opacity 0.2s, transform 0.1s;
-    }
-    .btn:hover { opacity: 0.9; transform: translateY(-1px); }
-    .btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
-    .btn svg { flex-shrink: 0; }
-    .status { margin-top: 18px; font-size: 13px; color: #64748b; min-height: 20px; }
-    .status.error { color: #f87171; }
-    .status.success { color: #4ade80; }
-    .spinner {
-      display: inline-block;
-      width: 14px; height: 14px;
-      border: 2px solid #4ade80;
-      border-top-color: transparent;
-      border-radius: 50%;
-      animation: spin 0.7s linear infinite;
-      margin-right: 6px;
-      vertical-align: middle;
-    }
-    @keyframes spin { to { transform: rotate(360deg); } }
-  </style>
-</head>
-<body>
-  <div class="card">
-    <div class="logo">◇</div>
-    <h1>Connect Chip to Claude</h1>
-    <p>Sign in with your Google account to link Claude to your Chip dashboard and ESP32 board.</p>
-    <button class="btn" id="signInBtn" onclick="signIn()">
-      <svg width="18" height="18" viewBox="0 0 18 18">
-        <path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.92c1.7-1.57 2.68-3.88 2.68-6.62z"/>
-        <path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.92-2.26c-.8.54-1.84.86-3.04.86-2.34 0-4.32-1.58-5.02-3.7H.96v2.34A9 9 0 0 0 9 18z"/>
-        <path fill="#FBBC05" d="M3.98 10.72a5.4 5.4 0 0 1 0-3.44V4.94H.96a9 9 0 0 0 0 8.12l3.02-2.34z"/>
-        <path fill="#EA4335" d="M9 3.58c1.32 0 2.5.45 3.44 1.35l2.58-2.58C13.47.9 11.43 0 9 0A9 9 0 0 0 .96 4.94l3.02 2.34C4.68 5.16 6.66 3.58 9 3.58z"/>
-      </svg>
-      Continue with Google
-    </button>
-    <div class="status" id="status"></div>
-  </div>
-
-  <script type="module">
-    import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
-    import { getAuth, GoogleAuthProvider, signInWithPopup } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
-
-    const firebaseConfig = {
-      apiKey: 'AIzaSyCqGDdLjDTgdTgprcK19daAFPSth6N4jdM',
-      authDomain: 'chip-hq.firebaseapp.com',
-      projectId: 'chip-hq',
-      storageBucket: 'chip-hq.firebasestorage.app',
-      messagingSenderId: '358690504566',
-      appId: '1:358690504566:web:2b8623c8ef2cee5c2f8457',
-    };
-
-    const app = initializeApp(firebaseConfig);
-    const auth = getAuth(app);
-    const provider = new GoogleAuthProvider();
-
-    window.signIn = async function signIn() {
-      const btn = document.getElementById('signInBtn');
-      const status = document.getElementById('status');
-      btn.disabled = true;
-      status.className = 'status';
-      status.innerHTML = '<span class="spinner"></span> Signing in…';
-
-      try {
-        const result = await signInWithPopup(auth, provider);
-        const idToken = await result.user.getIdToken();
-
-        status.innerHTML = '<span class="spinner"></span> Linking to Claude…';
-
-        const resp = await fetch('${finalizeUrl}', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ idToken, sessionId: '${sessionId}' }),
-        });
-
-        const data = await resp.json();
-
-        if (!resp.ok) {
-          throw new Error(data.error || 'Failed to finalize authentication');
-        }
-
-        // Redirect back to Claude with the auth code
-        window.location.href = data.redirectUrl;
-
-      } catch (err) {
-        status.className = 'status error';
-        status.textContent = err.message || 'Sign-in failed. Please try again.';
-        btn.disabled = false;
-      }
-    };
-  </script>
-</body>
-</html>`);
+  return res.redirect(clientAuthUrl.toString());
 });
 
-// ── Finalize — receives Firebase ID token from the sign-in page ──────────────
+// ── Finalize — receives Firebase ID token from the Client App Approval Box ───
 
 router.post('/oauth/finalize', async (req, res) => {
   const { idToken, sessionId } = req.body || {};
@@ -239,7 +109,7 @@ router.post('/oauth/finalize', async (req, res) => {
     return res.status(400).json({ error: 'Session expired or invalid. Please try connecting again.' });
   }
 
-  // Decode Firebase JWT payload (we trust Firebase's signature here — it's signed by Google's keys)
+  // Decode Firebase JWT payload
   let firebaseUid, email;
   try {
     const parts = idToken.split('.');
@@ -248,7 +118,7 @@ router.post('/oauth/finalize', async (req, res) => {
     firebaseUid = payload.sub || payload.user_id;
     email = payload.email;
     if (!firebaseUid) throw new Error('No UID in token');
-  } catch (err) {
+  } catch {
     return res.status(401).json({ error: 'Invalid Firebase ID token' });
   }
 
@@ -258,7 +128,7 @@ router.post('/oauth/finalize', async (req, res) => {
     userId: firebaseUid,
     email,
     redirectUri: session.redirectUri,
-    expires: Date.now() + 5 * 60 * 1000, // 5 min to exchange
+    expires: Date.now() + 5 * 60 * 1000,
   });
   pendingCodes.delete(`session:${sessionId}`);
 
@@ -267,7 +137,7 @@ router.post('/oauth/finalize', async (req, res) => {
   redirectUrl.searchParams.set('code', code);
   if (session.state) redirectUrl.searchParams.set('state', session.state);
 
-  console.log(`[OAuth] User authenticated: ${email} (${firebaseUid})`);
+  console.log(`[OAuth] Connection approved on client by: ${email} (${firebaseUid})`);
   res.json({ redirectUrl: redirectUrl.toString() });
 });
 
@@ -297,7 +167,7 @@ router.post('/oauth/token', express.urlencoded({ extended: false }), (req, res) 
     scope: 'chip:mcp',
   }, 30 * 24 * 3600); // 30 days
 
-  console.log(`[OAuth] Token issued for ${codeData.email}`);
+  console.log(`[OAuth] Access token issued for ${codeData.email}`);
 
   res.json({
     access_token: accessToken,
@@ -306,8 +176,5 @@ router.post('/oauth/token', express.urlencoded({ extended: false }), (req, res) 
     scope: 'chip:mcp',
   });
 });
-
-// Need to import express for the urlencoded middleware above
-import express from 'express';
 
 export default router;
