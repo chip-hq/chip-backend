@@ -1,15 +1,4 @@
-// storage.js — persistence layer for Chip's backend.
-//
-// Model: the in-memory Maps are the always-available live working set (the flash
-// relay must never depend on the DB being up — the browser is "the hand"). Mongo
-// is mirrored best-effort on top and preferred for reads, so a restarted process
-// can still serve jobs created before the restart.
-//
-//   write  -> memory (always) + Mongo (best-effort, fire-and-forget)
-//   read   -> Mongo first when connected, else fall back to memory
-//
-// Every Mongo call is wrapped so a DB hiccup can never block a socket message or
-// an HTTP response, and initStorage() never throws — the server always boots.
+// services/storage.js — Persistence layer for Chip backend.
 
 import { MongoClient } from 'mongodb';
 import dns from 'node:dns';
@@ -41,9 +30,6 @@ export async function initStorage() {
     return { connected: false };
   }
 
-  // Escape hatch for machines whose default resolver can't do the SRV lookup a
-  // "mongodb+srv://" URI needs (e.g. a node resolver pointed at a dead
-  // 127.0.0.1). Opt-in and a no-op if unset — production/Render never needs it.
   const dnsServers = process.env.MONGODB_DNS_SERVERS;
   if (dnsServers) {
     const servers = dnsServers.split(',').map((s) => s.trim()).filter(Boolean);
@@ -56,8 +42,6 @@ export async function initStorage() {
   try {
     client = new MongoClient(uri, { serverSelectionTimeoutMS: 5000 });
 
-    // Keep mongoReady honest as the topology comes and goes, so /health is
-    // accurate and we skip Mongo attempts while it's known-down.
     client.on('serverHeartbeatSucceeded', () => {
       mongoReady = true;
     });
@@ -68,7 +52,6 @@ export async function initStorage() {
       mongoReady = false;
     });
 
-    // db handle is valid even before connect(); operations connect lazily.
     db = client.db(dbName);
 
     await client.connect();
@@ -168,7 +151,6 @@ export async function listDevices(userId = null) {
   return userId ? all.filter((d) => d.userId === userId) : all;
 }
 
-// Look up a single device doc by deviceId (memory-first)
 export async function getDevice(deviceId) {
   const mem = memDevices.get(deviceId);
   if (mem) return mem;
@@ -182,14 +164,8 @@ export async function getDevice(deviceId) {
   return null;
 }
 
-
 // --- Jobs --------------------------------------------------------------------
 
-// Per-job serialized Mongo write chain. Memory is the authoritative live copy;
-// each mirror writes a full, immutable snapshot of the in-memory doc (never an
-// incremental $push). Serializing per job keeps writes in submission order, so
-// fire-and-forget mirrors can't reorder or double-append, and every write is
-// idempotent — safe to run after a create hasn't landed yet (upsert).
 const jobWriteChains = new Map(); // jobId -> Promise
 
 function mirrorJob(jobId) {
@@ -200,13 +176,12 @@ function mirrorJob(jobId) {
   const snapshot = { ...job, log: [...job.log] };
   const prev = jobWriteChains.get(jobId) ?? Promise.resolve();
   const next = prev
-    .catch(() => {}) // a prior failure must not break the chain
+    .catch(() => {})
     .then(() => db.collection('jobs').replaceOne({ jobId }, snapshot, { upsert: true }))
     .catch((err) => warn('mirrorJob', err));
 
   jobWriteChains.set(jobId, next);
   next.finally(() => {
-    // Drop the chain once it drains, unless a newer write already replaced it.
     if (jobWriteChains.get(jobId) === next) jobWriteChains.delete(jobId);
   });
 }
@@ -225,9 +200,6 @@ export function createJob(job) {
   return doc;
 }
 
-// Memory-first: during a live session the in-memory doc is always the freshest
-// (it's written synchronously before the Mongo mirror). Mongo is the fallback
-// that answers after a restart — or on another instance — when memory is empty.
 export async function getJob(jobId) {
   const mem = memJobs.get(jobId);
   if (mem) return mem;
@@ -242,10 +214,9 @@ export async function getJob(jobId) {
   return null;
 }
 
-// Patch a job's status/progress/error/phase and optionally append one log line or store artifacts.
 export function updateJob(jobId, { status, progress, error, logLine, phase, binBase64, binSize, offset, filename, sourceCode } = {}) {
   const job = memJobs.get(jobId);
-  if (!job) return; // unknown job — nothing authoritative to update
+  if (!job) return;
 
   if (phase !== undefined) job.phase = phase;
   if (status !== undefined) job.status = status;
@@ -299,5 +270,3 @@ export async function clearJobs(userId = null) {
     }
   }
 }
-
-

@@ -1,32 +1,18 @@
+// index.js — Main application entry point for Chip backend.
+
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import { createServer } from 'http';
-import { WebSocketServer, WebSocket } from 'ws';
-import { readFile, writeFile, mkdir } from 'fs/promises';
-import { existsSync } from 'fs';
-import { join } from 'path';
-import { homedir } from 'os';
+import { initStorage, closeStorage, isDbConnected } from './services/storage.js';
+import { extractUser } from './middleware/auth.js';
+import oauthRouter, { verifyJWT } from './routes/oauth.js';
+import { setupWebSocket, deviceSockets } from './services/websocket.js';
 
-const FIRMWARE_CACHE_PATH = join(homedir(), '.chip-build-cache', 'esp32dev', '.pio', 'build', 'esp32dev', 'firmware.bin');
-const FIRMWARE_B64_CACHE = join(homedir(), '.chip-build-cache', 'last_firmware.b64');
-import {
-  initStorage,
-  closeStorage,
-  isDbConnected,
-  upsertDevice,
-  setDeviceConnected,
-  listDevices,
-  getDevice,
-  createJob,
-  getJob,
-  updateJob,
-  listJobs,
-  clearJobs,
-} from './storage.js';
-import { compileFirmware } from './platformio-runner.js';
-import { extractUser } from './auth.js';
-import oauthRouter, { verifyJWT } from './oauth.js';
+import devicesRouter from './routes/devices.js';
+import jobsRouter from './routes/jobs.js';
+import compileRouter from './routes/compile.js';
+import flashRouter from './routes/flash.js';
 
 dotenv.config();
 
@@ -36,10 +22,10 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
-// Mount OAuth 2.1 routes (/.well-known, /oauth/authorize, /oauth/token, /oauth/finalize)
+// 1. OAuth 2.1 routes (/.well-known, /oauth/authorize, /oauth/token, /oauth/finalize)
 app.use(oauthRouter);
 
-// Unified user extraction: check Bearer JWT (issued by OAuth) first, then fallback headers
+// 2. User authentication middleware
 app.use((req, res, next) => {
   const authHeader = req.headers.authorization;
   if (authHeader && authHeader.startsWith('Bearer ')) {
@@ -56,111 +42,7 @@ app.use((req, res, next) => {
   extractUser(req, res, next);
 });
 
-const server = createServer(app);
-const wss = new WebSocketServer({ server });
-
-// Live WebSocket sockets by deviceId. A socket can't be persisted, so this map
-// (the one thing that must stay in-process) holds only the live connections used
-// to relay flashes. All device metadata + job status lives in storage.js.
-const deviceSockets = new Map();
-
-// Helper to reliably resolve the owner userId from token, headers, params, or registered devices
-async function resolveUserId(req, deviceId = null) {
-  // 1. Direct from Bearer JWT or x-user-id middleware
-  if (req.userId) return String(req.userId);
-  if (req.headers && req.headers['x-user-id']) return String(req.headers['x-user-id']);
-
-  // 2. From body or query params
-  if (req.body && (req.body.userId || req.body.uid)) return String(req.body.userId || req.body.uid);
-  if (req.query && (req.query.userId || req.query.uid)) return String(req.query.userId || req.query.uid);
-
-  // 3. From target device
-  if (deviceId) {
-    const dev = await getDevice(deviceId);
-    if (dev && dev.userId) return String(dev.userId);
-  }
-
-  // 4. From any active registered device
-  const devices = await listDevices();
-  const withUser = devices.find((d) => d.userId);
-  if (withUser && withUser.userId) return String(withUser.userId);
-
-  return 'anonymous';
-}
-
-// --- WebSocket connection handler --------------------------------------------
-wss.on('connection', (ws, req) => {
-  let deviceId = 'default_device';
-
-  // Immediately register socket so it is visible to /api/devices and flash relays
-  deviceSockets.set(deviceId, ws);
-  upsertDevice({ deviceId, chip: 'ESP32', connected: true });
-  console.log(`[WS] New client connection from ${req.socket.remoteAddress}`);
-
-  ws.on('message', (message) => {
-    try {
-      const data = JSON.parse(message.toString());
-      
-      // Registration message from browser dashboard
-      if (data.type === 'register') {
-        deviceId = data.deviceId || 'default_device';
-        const userId = data.userId || data.uid || null;
-        deviceSockets.set(deviceId, ws);
-        upsertDevice({
-          deviceId,
-          chip: data.chip || 'ESP32',
-          connected: data.connected ?? true,
-          userId,
-        });
-        console.log(`[WS] Device registered: ${deviceId} (${data.chip || 'ESP32'})${userId ? ` [User: ${userId}]` : ''}`);
-        ws.send(JSON.stringify({ type: 'registered', deviceId, userId, status: 'ok' }));
-      }
-
-      // Progress updates from browser flasher
-      if (data.type === 'flash_progress') {
-        updateJob(data.jobId, {
-          progress: data.progress,
-          status: data.status || 'flashing',
-          logLine: data.logLine,
-        });
-      }
-
-      // Flash complete / error updates
-      if (data.type === 'flash_complete') {
-        updateJob(data.jobId, {
-          progress: 100,
-          status: 'done',
-          logLine: 'Flash successfully completed.',
-        });
-      }
-
-      if (data.type === 'flash_error') {
-        updateJob(data.jobId, {
-          status: 'error',
-          error: data.error,
-          logLine: `Error: ${data.error}`,
-        });
-      }
-    } catch (err) {
-      console.error('[WS] Failed to parse message:', err);
-    }
-  });
-
-  ws.on('close', () => {
-    console.log(`[WS] Connection closed for ${deviceId}`);
-    if (deviceSockets.get(deviceId) === ws) {
-      deviceSockets.delete(deviceId);
-    }
-    setDeviceConnected(deviceId, false);
-  });
-
-  ws.on('error', (err) => {
-    console.error(`[WS] Error on ${deviceId}:`, err);
-  });
-});
-
-// --- HTTP API Endpoints ------------------------------------------------------
-
+// 3. Health check
 app.get('/health', (req, res) => {
   res.json({
     status: 'ok',
@@ -170,226 +52,24 @@ app.get('/health', (req, res) => {
   });
 });
 
-// List known browser devices (used by MCP list_devices or frontend).
-app.get('/api/devices', async (req, res) => {
-  const targetUserId = req.userId || req.query.userId || null;
-  const stored = await listDevices(targetUserId);
-  const storedMap = new Map(stored.map((d) => [d.deviceId, d]));
+// 4. API Route Modules
+app.use(devicesRouter);
+app.use(jobsRouter);
+app.use(compileRouter);
+app.use(flashRouter);
 
-  // Ensure every active WebSocket connection is included with connected: true
-  for (const [id] of deviceSockets.entries()) {
-    if (storedMap.has(id)) {
-      storedMap.get(id).connected = true;
-    } else if (!targetUserId) {
-      storedMap.set(id, { deviceId: id, chip: 'ESP32', connected: true });
-    }
-  }
+// 5. Create Server & Initialize WebSockets
+const server = createServer(app);
+setupWebSocket(server);
 
-  res.json({ devices: Array.from(storedMap.values()) });
-});
-
-// Trigger flash job (used by MCP flash_device or manual API)
-app.post('/api/flash', async (req, res) => {
-  const { jobId: compileJobId, binBase64: rawBase64, deviceId = 'default_device', offset: requestedOffset, filename = 'firmware.bin' } = req.body ?? {};
-  let payloadBase64 = rawBase64;
-  let targetOffset = requestedOffset;
-
-  // If jobId was passed in binBase64 field (e.g. "compile_...")
-  if (payloadBase64 && payloadBase64.startsWith('compile_')) {
-    const compileJob = await getJob(payloadBase64);
-    payloadBase64 = compileJob?.binBase64;
-    targetOffset = compileJob?.offset || targetOffset || '0x0';
-  } else if (!payloadBase64 && compileJobId) {
-    const compileJob = await getJob(compileJobId);
-    payloadBase64 = compileJob?.binBase64;
-    targetOffset = compileJob?.offset || targetOffset || '0x0';
-  }
-
-  // Fallback to latest compiled binary on disk if memory is empty
-  if (!payloadBase64) {
-    try {
-      // Try the saved base64 cache first (fastest)
-      if (existsSync(FIRMWARE_B64_CACHE)) {
-        payloadBase64 = await readFile(FIRMWARE_B64_CACHE, 'utf8');
-      } else if (existsSync(FIRMWARE_CACHE_PATH)) {
-        payloadBase64 = (await readFile(FIRMWARE_CACHE_PATH)).toString('base64');
-      }
-    } catch {
-      // ignore
-    }
-  }
-
-  if (!payloadBase64) {
-    return res.status(400).json({ error: 'No compiled binary found. Please run compile_firmware first.' });
-  }
-
-  const offset = targetOffset || '0x0';
-
-  // Resolve the target socket: the named device, else the first live one
-  let targetId = deviceId;
-  let socket = deviceSockets.get(deviceId);
-  if (!socket) {
-    const first = deviceSockets.entries().next().value;
-    if (first) [targetId, socket] = first;
-  }
-
-  if (!socket || socket.readyState !== WebSocket.OPEN) {
-    return res.status(404).json({ error: `No active browser connected for device "${deviceId}"` });
-  }
-
-  const flashJobId = `flash_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-  const userId = await resolveUserId(req, targetId);
-
-  createJob({
-    jobId: flashJobId,
-    userId,
-    deviceId: targetId,
-    filename,
-    offset,
-    status: 'started',
-    progress: 0,
-    log: ['Job created, relaying firmware binary to browser dashboard...'],
-  });
-
-  // Relay binary payload over WebSocket to browser flasher
-  socket.send(
-    JSON.stringify({
-      type: 'flash_payload',
-      jobId: flashJobId,
-      filename,
-      offset,
-      binBase64: payloadBase64,
-    })
-  );
-
-  res.json({
-    jobId: flashJobId,
-    status: 'started',
-    offset,
-    message: `Firmware relayed to browser dashboard for ${targetId}`,
-  });
-});
-
-// List jobs (optionally filtered by logged-in user or userId query param)
-app.get('/api/jobs', async (req, res) => {
-  const targetUserId = await resolveUserId(req);
-  const jobs = await listJobs(targetUserId === 'anonymous' ? null : targetUserId);
-  res.json({ jobs });
-});
-
-// Clear all jobs in history (supports DELETE and POST)
-const handleClearJobs = async (req, res) => {
-  const targetUserId = await resolveUserId(req);
-  await clearJobs(targetUserId === 'anonymous' ? null : targetUserId);
-  res.json({ status: 'ok', message: 'Job history cleared' });
-};
-app.delete('/api/jobs', handleClearJobs);
-app.post('/api/jobs/clear', handleClearJobs);
-
-// Get flash job status (used by MCP get_status)
-app.get('/api/jobs/:jobId', async (req, res) => {
-  const job = await getJob(req.params.jobId);
-  if (!job) {
-    return res.status(404).json({ error: 'Job not found' });
-  }
-  res.json(job);
-});
-
-// Download compiled binary directly
-app.get('/api/jobs/:jobId/download', async (req, res) => {
-  const job = await getJob(req.params.jobId);
-  if (!job || !job.binBase64) {
-    return res.status(404).json({ error: 'Binary file not found for this job' });
-  }
-  const buffer = Buffer.from(job.binBase64, 'base64');
-  res.setHeader('Content-Type', 'application/octet-stream');
-  res.setHeader('Content-Disposition', `attachment; filename="${job.filename || `${job.jobId}.bin`}"`);
-  res.send(buffer);
-});
-
-// Compile firmware via PlatformIO (used by MCP compile_firmware)
-// Synchronous from the caller's perspective: waits for pio run to finish,
-// then returns binBase64 in the response body. The job doc is updated live
-// (log lines appended) so the dashboard can poll GET /api/jobs/:jobId.
-app.post('/api/compile', async (req, res) => {
-  const { source, board = 'esp32' } = req.body;
-
-  if (!source || typeof source !== 'string' || source.trim().length === 0) {
-    return res.status(400).json({ error: '"source" (C++ string) is required' });
-  }
-
-  const jobId = `compile_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-  const anyDevice = Array.from(deviceSockets.keys())[0];
-  const userId = await resolveUserId(req, anyDevice);
-
-  createJob({
-    jobId,
-    userId,
-    phase: 'compile',
-    board,
-    sourceCode: source,
-    filename: `firmware_${board}.bin`,
-    status: 'compiling',
-    progress: 0,
-    log: ['Compile job started…'],
-  });
-
-  console.log(`[COMPILE] Job ${jobId} started — board: ${board}`);
-
-  try {
-    const result = await compileFirmware({
-      source,
-      board,
-      jobId,
-      onLog: (line) => {
-        updateJob(jobId, { logLine: line });
-      },
-    });
-
-    updateJob(jobId, {
-      status: 'done',
-      progress: 100,
-      binBase64: result.binBase64,
-      binSize: result.binSize,
-      offset: result.offset || '0x0',
-      filename: `firmware_${board}.bin`,
-      sourceCode: source,
-      logLine: `Done — ${result.binSize} bytes in ${(result.durationMs / 1000).toFixed(1)}s`,
-    });
-
-    // Persist binary to disk so it survives container restarts
-    try {
-      await mkdir(join(homedir(), '.chip-build-cache'), { recursive: true });
-      await writeFile(FIRMWARE_B64_CACHE, result.binBase64, 'utf8');
-    } catch {
-      // non-fatal
-    }
-
-    console.log(`[COMPILE] Job ${jobId} done — ${result.binSize} bytes (@ ${result.offset || '0x0'})`);
-
-    return res.json({
-      jobId,
-      status: 'done',
-      binBase64: result.binBase64,
-      binSize: result.binSize,
-      offset: result.offset || '0x0',
-      durationMs: result.durationMs,
-      log: result.log,
-    });
-  } catch (err) {
-    updateJob(jobId, { status: 'error', error: err.message, logLine: `Error: ${err.message}` });
-    console.error(`[COMPILE] Job ${jobId} failed:`, err.message);
-    return res.status(500).json({ jobId, status: 'error', error: err.message });
-  }
-});
-
-// Connect the store (best-effort — never blocks boot), then start listening.
+// 6. Connect Database (best-effort) & Start Listening
 await initStorage();
 
 server.listen(PORT, () => {
   console.log(`Chip Backend running with WebSocket support on port ${PORT}`);
 });
 
+// 7. Graceful Shutdown
 async function shutdown(signal) {
   console.log(`\n[server] ${signal} received — shutting down.`);
   server.close();

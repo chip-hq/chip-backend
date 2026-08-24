@@ -1,4 +1,4 @@
-// auth.js — Safe Firebase Token parsing & user extraction middleware for Chip backend.
+// middleware/auth.js — Safe Firebase Token parsing & user extraction middleware.
 
 function decodeJwtPayload(token) {
   try {

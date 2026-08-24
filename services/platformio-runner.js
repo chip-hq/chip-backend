@@ -1,16 +1,12 @@
-// platformio-runner.js
+// services/platformio-runner.js
 // Compiles ESP32 Arduino source code using PlatformIO CLI.
 // Creates an isolated temp project per job, compiles, and returns the .bin.
-//
-// Usage:
-//   import { compileFirmware } from './platformio-runner.js';
-//   const result = await compileFirmware({ source, board, jobId, onLog });
 
 import { spawn } from 'child_process';
-import { mkdtemp, writeFile, readFile, rm, access, mkdir } from 'fs/promises';
+import { writeFile, readFile, access, mkdir } from 'fs/promises';
 import { constants, existsSync } from 'fs';
 import { join } from 'path';
-import { tmpdir, homedir } from 'os';
+import { homedir } from 'os';
 
 // Known PlatformIO board IDs for common ESP32 variants.
 const BOARD_MAP = {
@@ -22,9 +18,7 @@ const BOARD_MAP = {
 };
 
 // Probe common locations where pip may have installed pio.exe on Windows.
-// pip often drops scripts into an MS Store Python's LocalCache which is NOT on PATH.
 const WINDOWS_PIO_CANDIDATES = [
-  // MS Store Python 3.12 (most common in 2024-25)
   join(
     homedir(),
     'AppData',
@@ -37,7 +31,6 @@ const WINDOWS_PIO_CANDIDATES = [
     'Scripts',
     'pio.exe'
   ),
-  // MS Store Python 3.11
   join(
     homedir(),
     'AppData',
@@ -50,18 +43,12 @@ const WINDOWS_PIO_CANDIDATES = [
     'Scripts',
     'pio.exe'
   ),
-  // Traditional Python install
   join(homedir(), 'AppData', 'Local', 'Programs', 'Python', 'Python312', 'Scripts', 'pio.exe'),
   join(homedir(), 'AppData', 'Local', 'Programs', 'Python', 'Python311', 'Scripts', 'pio.exe'),
   join(homedir(), 'AppData', 'Roaming', 'Python', 'Python312', 'Scripts', 'pio.exe'),
   join(homedir(), 'AppData', 'Roaming', 'Python', 'Python311', 'Scripts', 'pio.exe'),
 ];
 
-/**
- * Find the pio executable. On Windows, pip often installs into a Scripts dir
- * that isn't on PATH; we probe known locations before falling back to 'pio'.
- * @returns {Promise<{cmd: string, args: string[]}>}
- */
 async function resolvePio() {
   if (process.platform !== 'win32') {
     return { cmd: 'pio', args: ['run'] };
@@ -71,16 +58,12 @@ async function resolvePio() {
       await access(candidate, constants.X_OK);
       return { cmd: candidate, args: ['run'] };
     } catch {
-      // not found or not executable — try next
+      // not found or not executable
     }
   }
-  // Last resort: invoke via cmd so PATH is re-evaluated by the shell
   return { cmd: 'cmd', args: ['/c', 'pio', 'run'] };
 }
 
-
-
-// The platformio.ini template for an Arduino-framework ESP32 project.
 function buildIni(boardId) {
   return `[env:target]
 platform = espressif32
@@ -91,25 +74,12 @@ build_flags = -DCORE_DEBUG_LEVEL=0
 `;
 }
 
-// Locate the compiled firmware binary inside the PlatformIO build tree.
 function findBin(projectDir) {
-  // Standard build path for a named env called "target"
   const standard = join(projectDir, '.pio', 'build', 'target', 'firmware.bin');
   if (existsSync(standard)) return standard;
   return null;
 }
 
-/**
- * Compile Arduino/ESP32 source using PlatformIO.
- *
- * @param {object} opts
- * @param {string}   opts.source   - C++ source code (Arduino sketch)
- * @param {string}  [opts.board]   - Board slug (default: "esp32")
- * @param {string}  [opts.jobId]   - Job ID for log labeling
- * @param {Function}[opts.onLog]   - Called with each log line as it arrives
- * @param {number}  [opts.timeout] - Compile timeout in ms (default: 120 000)
- * @returns {Promise<{binBase64:string, binSize:number, durationMs:number, log:string[]}>}
- */
 export async function compileFirmware({
   source,
   board = 'esp32',
@@ -126,9 +96,6 @@ export async function compileFirmware({
     onLog(line);
   };
 
-  // Use a persistent build directory per board so the Arduino framework files
-  // (.pio/build/target/FrameworkArduino/*.o) stay cached across compiles.
-  // This reduces compile time from 180s down to ~2-4s on subsequent compiles!
   const cacheBase = join(homedir(), '.chip-build-cache');
   const projectDir = join(cacheBase, boardId);
   await mkdir(projectDir, { recursive: true });
@@ -137,13 +104,11 @@ export async function compileFirmware({
   emit(`[COMPILE] Board: ${boardId}`);
 
   try {
-    // Write platformio.ini and the user's source.
     await writeFile(join(projectDir, 'platformio.ini'), buildIni(boardId), 'utf8');
 
     const srcDir = join(projectDir, 'src');
     await mkdir(srcDir, { recursive: true });
 
-    // Arduino sketch compatibility: ensure <Arduino.h> is included
     const preparedSource = source.includes('Arduino.h')
       ? source
       : `#include <Arduino.h>\n${source}`;
@@ -187,7 +152,6 @@ export async function compileFirmware({
       });
     });
 
-    // Read the compiled binary.
     const binPath = findBin(projectDir);
     if (!binPath) {
       throw new Error('Compile succeeded but firmware.bin not found in .pio/build/target/');
@@ -200,8 +164,6 @@ export async function compileFirmware({
     let finalBuf = firmwareBuf;
     let flashOffset = '0x10000';
 
-    // If bootloader and partition table exist, produce a complete merged image starting at 0x0
-    // This guarantees the ESP32 will boot and run even on completely erased chips!
     if (existsSync(bootloaderPath) && existsSync(partitionsPath)) {
       try {
         const bootloaderBuf = await readFile(bootloaderPath);
@@ -227,6 +189,6 @@ export async function compileFirmware({
 
     return { binBase64, binSize: finalBuf.length, offset: flashOffset, durationMs, log };
   } finally {
-    // Keep projectDir intact so .pio build cache persists for instant re-compilations!
+    // Keep cache
   }
 }

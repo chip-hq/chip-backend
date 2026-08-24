@@ -1,4 +1,4 @@
-// oauth.js — Complete OAuth 2.1 Server with Dynamic Client Registration (RFC 7591) and PKCE for Claude.
+// routes/oauth.js — Complete OAuth 2.1 Server with Dynamic Client Registration (RFC 7591) and PKCE.
 
 import { createHmac, createHash, randomBytes } from 'crypto';
 import express, { Router } from 'express';
@@ -67,7 +67,6 @@ router.get('/.well-known/oauth-authorization-server', (req, res) => {
 });
 
 // ── Dynamic Client Registration (RFC 7591) ───────────────────────────────────
-// Claude calls this automatically to register itself and obtain a client_id.
 
 router.post('/oauth/register', express.json(), (req, res) => {
   const { redirect_uris = [], client_name = 'Claude' } = req.body || {};
@@ -145,7 +144,6 @@ router.post('/oauth/finalize', express.json(), async (req, res) => {
     return res.status(400).json({ error: 'Session expired or invalid. Please try connecting again.' });
   }
 
-  // Decode Firebase JWT payload
   let firebaseUid, email;
   try {
     const parts = idToken.split('.');
@@ -158,7 +156,6 @@ router.post('/oauth/finalize', express.json(), async (req, res) => {
     return res.status(401).json({ error: 'Invalid Firebase ID token' });
   }
 
-  // Generate a short-lived auth code
   const code = randomBytes(24).toString('hex');
   pendingCodes.set(`code:${code}`, {
     userId: firebaseUid,
@@ -170,7 +167,6 @@ router.post('/oauth/finalize', express.json(), async (req, res) => {
   });
   pendingCodes.delete(`session:${sessionId}`);
 
-  // Build the redirect URL back to Claude with the code
   const redirectUrl = new URL(session.redirectUri);
   redirectUrl.searchParams.set('code', code);
   if (session.state) redirectUrl.searchParams.set('state', session.state);
@@ -197,7 +193,6 @@ router.post('/oauth/token', express.urlencoded({ extended: false }), express.jso
     return res.status(400).json({ error: 'invalid_grant', error_description: 'Code expired or invalid' });
   }
 
-  // PKCE verification
   if (codeData.codeChallenge && code_verifier) {
     let computed;
     if (codeData.codeChallengeMethod === 'plain') {
@@ -218,7 +213,7 @@ router.post('/oauth/token', express.urlencoded({ extended: false }), express.jso
     sub: codeData.userId,
     email: codeData.email,
     scope: 'chip:mcp',
-  }, 30 * 24 * 3600); // 30 days
+  }, 30 * 24 * 3600);
 
   console.log(`[OAuth] Access token issued for ${codeData.email}`);
 
