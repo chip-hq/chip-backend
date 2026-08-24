@@ -22,6 +22,7 @@ import {
   getJob,
   updateJob,
   listJobs,
+  clearJobs,
 } from './storage.js';
 import { compileFirmware } from './platformio-runner.js';
 import { extractUser } from './auth.js';
@@ -62,6 +63,30 @@ const wss = new WebSocketServer({ server });
 // (the one thing that must stay in-process) holds only the live connections used
 // to relay flashes. All device metadata + job status lives in storage.js.
 const deviceSockets = new Map();
+
+// Helper to reliably resolve the owner userId from token, headers, params, or registered devices
+async function resolveUserId(req, deviceId = null) {
+  // 1. Direct from Bearer JWT or x-user-id middleware
+  if (req.userId) return String(req.userId);
+  if (req.headers && req.headers['x-user-id']) return String(req.headers['x-user-id']);
+
+  // 2. From body or query params
+  if (req.body && (req.body.userId || req.body.uid)) return String(req.body.userId || req.body.uid);
+  if (req.query && (req.query.userId || req.query.uid)) return String(req.query.userId || req.query.uid);
+
+  // 3. From target device
+  if (deviceId) {
+    const dev = await getDevice(deviceId);
+    if (dev && dev.userId) return String(dev.userId);
+  }
+
+  // 4. From any active registered device
+  const devices = await listDevices();
+  const withUser = devices.find((d) => d.userId);
+  if (withUser && withUser.userId) return String(withUser.userId);
+
+  return 'anonymous';
+}
 
 // --- WebSocket connection handler --------------------------------------------
 wss.on('connection', (ws, req) => {
@@ -213,10 +238,7 @@ app.post('/api/flash', async (req, res) => {
   }
 
   const flashJobId = `flash_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-
-  // Inherit userId from the registered device (set when browser dashboard connected)
-  const deviceDoc = await getDevice(targetId);
-  const userId = req.userId || req.body?.userId || deviceDoc?.userId || null;
+  const userId = await resolveUserId(req, targetId);
 
   createJob({
     jobId: flashJobId,
@@ -250,9 +272,16 @@ app.post('/api/flash', async (req, res) => {
 
 // List jobs (optionally filtered by logged-in user or userId query param)
 app.get('/api/jobs', async (req, res) => {
-  const targetUserId = req.userId || req.query.userId || null;
-  const jobs = await listJobs(targetUserId);
+  const targetUserId = await resolveUserId(req);
+  const jobs = await listJobs(targetUserId === 'anonymous' ? null : targetUserId);
   res.json({ jobs });
+});
+
+// Clear all jobs in history
+app.delete('/api/jobs', async (req, res) => {
+  const targetUserId = await resolveUserId(req);
+  await clearJobs(targetUserId === 'anonymous' ? null : targetUserId);
+  res.json({ status: 'ok', message: 'Job history cleared' });
 });
 
 // Get flash job status (used by MCP get_status)
@@ -262,6 +291,18 @@ app.get('/api/jobs/:jobId', async (req, res) => {
     return res.status(404).json({ error: 'Job not found' });
   }
   res.json(job);
+});
+
+// Download compiled binary directly
+app.get('/api/jobs/:jobId/download', async (req, res) => {
+  const job = await getJob(req.params.jobId);
+  if (!job || !job.binBase64) {
+    return res.status(404).json({ error: 'Binary file not found for this job' });
+  }
+  const buffer = Buffer.from(job.binBase64, 'base64');
+  res.setHeader('Content-Type', 'application/octet-stream');
+  res.setHeader('Content-Disposition', `attachment; filename="${job.filename || `${job.jobId}.bin`}"`);
+  res.send(buffer);
 });
 
 // Compile firmware via PlatformIO (used by MCP compile_firmware)
@@ -276,17 +317,16 @@ app.post('/api/compile', async (req, res) => {
   }
 
   const jobId = `compile_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-
-  // Inherit userId from the first connected device (compile isn't device-specific)
   const anyDevice = Array.from(deviceSockets.keys())[0];
-  const deviceDoc = anyDevice ? await getDevice(anyDevice) : null;
-  const userId = req.userId || req.body?.userId || deviceDoc?.userId || null;
+  const userId = await resolveUserId(req, anyDevice);
 
   createJob({
     jobId,
     userId,
     phase: 'compile',
     board,
+    sourceCode: source,
+    filename: `firmware_${board}.bin`,
     status: 'compiling',
     progress: 0,
     log: ['Compile job started…'],
@@ -310,6 +350,8 @@ app.post('/api/compile', async (req, res) => {
       binBase64: result.binBase64,
       binSize: result.binSize,
       offset: result.offset || '0x0',
+      filename: `firmware_${board}.bin`,
+      sourceCode: source,
       logLine: `Done — ${result.binSize} bytes in ${(result.durationMs / 1000).toFixed(1)}s`,
     });
 

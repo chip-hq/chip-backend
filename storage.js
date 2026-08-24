@@ -110,9 +110,10 @@ export async function closeStorage() {
 export function upsertDevice({ deviceId, chip, connected = true, userId = null }) {
   const now = new Date();
   const existing = memDevices.get(deviceId);
+  const resolvedUserId = userId || existing?.userId || null;
   const doc = {
     deviceId,
-    userId: userId ?? existing?.userId ?? null,
+    userId: resolvedUserId,
     chip: chip ?? existing?.chip ?? 'ESP32',
     connected,
     firstSeen: existing?.firstSeen ?? now,
@@ -121,11 +122,15 @@ export function upsertDevice({ deviceId, chip, connected = true, userId = null }
   memDevices.set(deviceId, doc);
 
   if (canUseMongo()) {
+    const updateFields = { chip: doc.chip, connected, lastSeen: now };
+    if (resolvedUserId) {
+      updateFields.userId = resolvedUserId;
+    }
     db.collection('devices')
       .updateOne(
         { deviceId },
         {
-          $set: { chip: doc.chip, connected, lastSeen: now, userId: doc.userId },
+          $set: updateFields,
           $setOnInsert: { deviceId, firstSeen: doc.firstSeen },
         },
         { upsert: true }
@@ -210,6 +215,7 @@ export function createJob(job) {
   const now = new Date();
   const doc = {
     ...job,
+    userId: job.userId || 'anonymous',
     log: job.log ?? [],
     createdAt: now,
     updatedAt: now,
@@ -236,8 +242,8 @@ export async function getJob(jobId) {
   return null;
 }
 
-// Patch a job's status/progress/error/phase and optionally append one log line.
-export function updateJob(jobId, { status, progress, error, logLine, phase } = {}) {
+// Patch a job's status/progress/error/phase and optionally append one log line or store artifacts.
+export function updateJob(jobId, { status, progress, error, logLine, phase, binBase64, binSize, offset, filename, sourceCode } = {}) {
   const job = memJobs.get(jobId);
   if (!job) return; // unknown job — nothing authoritative to update
 
@@ -245,6 +251,11 @@ export function updateJob(jobId, { status, progress, error, logLine, phase } = {
   if (status !== undefined) job.status = status;
   if (progress !== undefined) job.progress = progress;
   if (error !== undefined) job.error = error;
+  if (binBase64 !== undefined) job.binBase64 = binBase64;
+  if (binSize !== undefined) job.binSize = binSize;
+  if (offset !== undefined) job.offset = offset;
+  if (filename !== undefined) job.filename = filename;
+  if (sourceCode !== undefined) job.sourceCode = sourceCode;
   if (logLine) job.log.push(logLine);
   job.updatedAt = new Date();
 
@@ -266,6 +277,27 @@ export async function listJobs(userId = null) {
   const all = Array.from(memJobs.values());
   const filtered = userId ? all.filter((j) => j.userId === userId) : all;
   return filtered.sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
+}
+
+export async function clearJobs(userId = null) {
+  if (userId) {
+    for (const [id, job] of memJobs.entries()) {
+      if (job.userId === userId) {
+        memJobs.delete(id);
+      }
+    }
+  } else {
+    memJobs.clear();
+  }
+
+  if (canUseMongo()) {
+    try {
+      const filter = userId ? { userId } : {};
+      await db.collection('jobs').deleteMany(filter);
+    } catch (err) {
+      warn('clearJobs', err);
+    }
+  }
 }
 
 
