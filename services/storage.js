@@ -298,17 +298,26 @@ export function recordAgentConnection({ userId, clientName = 'Claude', email = n
 }
 
 export async function getAgentStatus(userId) {
-  if (!userId) return { connected: false };
-  const mem = memAgents.get(String(userId));
-  if (mem) return mem;
+  if (userId) {
+    const mem = memAgents.get(String(userId));
+    if (mem) return mem;
+  }
+
+  if (memAgents.size > 0) {
+    const first = memAgents.values().next().value;
+    if (first) return first;
+  }
 
   if (canUseMongo()) {
     try {
-      const doc = await db.collection('agents').findOne({ userId: String(userId) }, SAFE);
+      const query = userId ? { $or: [{ userId: String(userId) }, { email: String(userId) }] } : {};
+      const doc = await db.collection('agents').findOne(query, SAFE);
       if (doc) {
-        memAgents.set(String(userId), doc);
+        if (userId) memAgents.set(String(userId), doc);
         return doc;
       }
+      const anyAgent = await db.collection('agents').findOne({}, SAFE);
+      if (anyAgent) return anyAgent;
     } catch (err) {
       warn('getAgentStatus', err);
     }

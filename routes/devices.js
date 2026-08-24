@@ -8,6 +8,16 @@ const router = Router();
 
 router.get('/api/devices', asyncRoute(async (req, res) => {
   const targetUserId = req.userId || (typeof req.query.userId === 'string' ? req.query.userId : null);
+
+  // If request came from an authenticated AI agent (Bearer token)
+  if (req.userId) {
+    recordAgentConnection({
+      userId: req.userId,
+      clientName: 'Claude / MCP Agent',
+      email: req.userEmail || null,
+    });
+  }
+
   const stored = await listDevices(targetUserId);
   const storedMap = new Map(stored.map((d) => [d.deviceId, d]));
 

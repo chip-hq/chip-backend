@@ -158,6 +158,12 @@ router.post('/oauth/finalize', express.json(), asyncRoute(async (req, res) => {
   });
   pendingCodes.delete(`session:${sessionId}`);
 
+  recordAgentConnection({
+    userId: firebaseUid,
+    clientName: 'Claude / MCP Agent',
+    email,
+  });
+
   const redirectUrl = new URL(session.redirectUri);
   redirectUrl.searchParams.set('code', code);
   if (session.state) redirectUrl.searchParams.set('state', session.state);

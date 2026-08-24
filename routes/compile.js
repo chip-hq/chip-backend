@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { writeFile, mkdir } from 'fs/promises';
 import { join } from 'path';
 import { homedir } from 'os';
-import { createJob, updateJob } from '../services/storage.js';
+import { createJob, updateJob, recordAgentConnection } from '../services/storage.js';
 import { compileFirmware } from '../services/platformio-runner.js';
 import { deviceSockets } from '../services/websocket.js';
 import { resolveUserId } from '../services/user-resolver.js';
@@ -23,6 +23,14 @@ router.post('/api/compile', asyncRoute(async (req, res) => {
   const board = typeof rawBoard === 'string' && ALLOWED_BOARDS.has(rawBoard.toLowerCase())
     ? rawBoard.toLowerCase()
     : 'esp32';
+
+  if (req.userId) {
+    recordAgentConnection({
+      userId: req.userId,
+      clientName: 'Claude / MCP Agent',
+      email: req.userEmail || null,
+    });
+  }
 
   const jobId = `compile_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
   const anyDevice = Array.from(deviceSockets.keys())[0];

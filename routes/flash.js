@@ -4,7 +4,7 @@ import { existsSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 import { WebSocket } from 'ws';
-import { getJob, createJob } from '../services/storage.js';
+import { getJob, createJob, recordAgentConnection } from '../services/storage.js';
 import { deviceSockets } from '../services/websocket.js';
 import { resolveUserId } from '../services/user-resolver.js';
 import { asyncRoute } from '../middleware/errorHandler.js';
@@ -53,6 +53,14 @@ router.post('/api/flash', asyncRoute(async (req, res) => {
 
   if (!payloadBase64) {
     return res.status(400).json({ error: 'No compiled binary found. Please run compile_firmware first.' });
+  }
+
+  if (req.userId) {
+    recordAgentConnection({
+      userId: req.userId,
+      clientName: 'Claude / MCP Agent',
+      email: req.userEmail || null,
+    });
   }
 
   const offset = targetOffset && /^0x[0-9a-fA-F]+$/.test(targetOffset) ? targetOffset : '0x0';
