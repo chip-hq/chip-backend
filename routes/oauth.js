@@ -1,28 +1,20 @@
-// routes/oauth.js — Complete OAuth 2.1 Server with Dynamic Client Registration (RFC 7591) and PKCE.
-
 import { createHmac, createHash, randomBytes } from 'crypto';
 import express, { Router } from 'express';
 import { asyncRoute } from '../middleware/errorHandler.js';
+import { recordAgentConnection } from '../services/storage.js';
 
 const router = Router();
 
 const SESSION_SECRET = process.env.SESSION_SECRET || 'chip-dev-secret-change-in-production';
-
-// Registered OAuth clients (RFC 7591 Dynamic Client Registration)
 const registeredClients = new Map();
-
-// Short-lived authorization codes (code → {userId, email, redirectUri, codeChallenge, codeChallengeMethod, expires})
 const pendingCodes = new Map();
 
-// Cleanup expired codes every 5 minutes
 setInterval(() => {
   const now = Date.now();
   for (const [key, val] of pendingCodes) {
     if (val.expires < now) pendingCodes.delete(key);
   }
 }, 5 * 60 * 1000);
-
-// ── JWT Helpers ──────────────────────────────────────────────────────────────
 
 export function signJWT(payload, expiresInSeconds = 86400 * 30) {
   const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url');
@@ -50,8 +42,6 @@ export function verifyJWT(token) {
   return payload;
 }
 
-// ── Discovery (RFC 8414) ──────────────────────────────────────────────────────
-
 router.get('/.well-known/oauth-authorization-server', (req, res) => {
   const base = `${req.protocol}://${req.get('host')}`;
   res.json({
@@ -66,8 +56,6 @@ router.get('/.well-known/oauth-authorization-server', (req, res) => {
     scopes_supported: ['openid'],
   });
 });
-
-// ── Dynamic Client Registration (RFC 7591) ───────────────────────────────────
 
 router.post('/oauth/register', express.json(), asyncRoute(async (req, res) => {
   const { redirect_uris = [], client_name = 'Claude' } = req.body || {};
@@ -96,8 +84,6 @@ router.post('/oauth/register', express.json(), asyncRoute(async (req, res) => {
   });
 }));
 
-// ── Authorization Endpoint — redirects to Client App for Approval ────────────
-
 router.get('/oauth/authorize', asyncRoute(async (req, res) => {
   const {
     redirect_uri,
@@ -111,7 +97,6 @@ router.get('/oauth/authorize', asyncRoute(async (req, res) => {
     return res.status(400).send('Missing redirect_uri');
   }
 
-  // Validate redirect_uri format
   try {
     new URL(redirect_uri);
   } catch {
@@ -134,11 +119,9 @@ router.get('/oauth/authorize', asyncRoute(async (req, res) => {
   clientAuthUrl.searchParams.set('redirect_uri', String(redirect_uri));
   if (state) clientAuthUrl.searchParams.set('state', String(state));
 
-  console.log(`[OAuth] Authorize requested. Redirecting to frontend: ${clientAuthUrl.toString()}`);
+  console.log(`[OAuth] Authorize requested: ${clientAuthUrl.toString()}`);
   return res.redirect(clientAuthUrl.toString());
 }));
-
-// ── Finalize — receives Firebase ID token from the Client App Approval Box ───
 
 router.post('/oauth/finalize', express.json(), asyncRoute(async (req, res) => {
   const { idToken, sessionId } = req.body || {};
@@ -179,11 +162,9 @@ router.post('/oauth/finalize', express.json(), asyncRoute(async (req, res) => {
   redirectUrl.searchParams.set('code', code);
   if (session.state) redirectUrl.searchParams.set('state', session.state);
 
-  console.log(`[OAuth] Connection approved on client by: ${email} (${firebaseUid})`);
+  console.log(`[OAuth] Connection approved by: ${email} (${firebaseUid})`);
   res.json({ redirectUrl: redirectUrl.toString() });
 }));
-
-// ── Token Endpoint — Claude exchanges code for access token ──────────────────
 
 router.post('/oauth/token', express.urlencoded({ extended: false }), express.json(), asyncRoute(async (req, res) => {
   const { code, grant_type, code_verifier } = req.body || {};
@@ -210,7 +191,6 @@ router.post('/oauth/token', express.urlencoded({ extended: false }), express.jso
     }
 
     if (computed !== codeData.codeChallenge) {
-      console.warn('[OAuth] PKCE verification failed');
       return res.status(400).json({ error: 'invalid_grant', error_description: 'PKCE verification failed' });
     }
   }
@@ -222,6 +202,12 @@ router.post('/oauth/token', express.urlencoded({ extended: false }), express.jso
     email: codeData.email,
     scope: 'chip:mcp',
   }, 30 * 24 * 3600);
+
+  recordAgentConnection({
+    userId: codeData.userId,
+    clientName: 'Claude / MCP Agent',
+    email: codeData.email,
+  });
 
   console.log(`[OAuth] Access token issued for ${codeData.email}`);
 

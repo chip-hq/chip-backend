@@ -1,5 +1,3 @@
-// routes/compile.js — PlatformIO firmware compilation endpoint.
-
 import { Router } from 'express';
 import { writeFile, mkdir } from 'fs/promises';
 import { join } from 'path';
@@ -13,11 +11,8 @@ import { asyncRoute } from '../middleware/errorHandler.js';
 const router = Router();
 
 const FIRMWARE_B64_CACHE = join(homedir(), '.chip-build-cache', 'last_firmware.b64');
-
-// Allowed board identifiers for input validation
 const ALLOWED_BOARDS = new Set(['esp32', 'esp32dev', 'esp32s2', 'esp32s3', 'esp32c3']);
 
-// Compile firmware via PlatformIO (used by MCP compile_firmware and direct API)
 router.post('/api/compile', asyncRoute(async (req, res) => {
   const { source, board: rawBoard = 'esp32' } = req.body || {};
 
@@ -25,7 +20,6 @@ router.post('/api/compile', asyncRoute(async (req, res) => {
     return res.status(400).json({ error: '"source" (C++ string) is required' });
   }
 
-  // Sanitize board identifier
   const board = typeof rawBoard === 'string' && ALLOWED_BOARDS.has(rawBoard.toLowerCase())
     ? rawBoard.toLowerCase()
     : 'esp32';
@@ -69,12 +63,11 @@ router.post('/api/compile', asyncRoute(async (req, res) => {
       logLine: `Done — ${result.binSize} bytes in ${(result.durationMs / 1000).toFixed(1)}s`,
     });
 
-    // Persist binary to disk so it survives restarts
     try {
       await mkdir(join(homedir(), '.chip-build-cache'), { recursive: true });
       await writeFile(FIRMWARE_B64_CACHE, result.binBase64, 'utf8');
     } catch {
-      // non-fatal
+      // non-fatal cache write
     }
 
     console.log(`[COMPILE] Job ${jobId} done — ${result.binSize} bytes (@ ${result.offset || '0x0'})`);

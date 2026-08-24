@@ -1,14 +1,9 @@
-// services/platformio-runner.js
-// Compiles ESP32 Arduino source code using PlatformIO CLI.
-// Creates an isolated temp project per job, compiles, and returns the .bin.
-
 import { spawn } from 'child_process';
 import { writeFile, readFile, access, mkdir } from 'fs/promises';
 import { constants, existsSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 
-// Known PlatformIO board IDs for common ESP32 variants.
 const BOARD_MAP = {
   esp32: 'esp32dev',
   esp32dev: 'esp32dev',
@@ -17,32 +12,9 @@ const BOARD_MAP = {
   esp32c3: 'esp32-c3-devkitm-1',
 };
 
-// Probe common locations where pip may have installed pio.exe on Windows.
 const WINDOWS_PIO_CANDIDATES = [
-  join(
-    homedir(),
-    'AppData',
-    'Local',
-    'Packages',
-    'PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0',
-    'LocalCache',
-    'local-packages',
-    'Python312',
-    'Scripts',
-    'pio.exe'
-  ),
-  join(
-    homedir(),
-    'AppData',
-    'Local',
-    'Packages',
-    'PythonSoftwareFoundation.Python.3.11_qbz5n2kfra8p0',
-    'LocalCache',
-    'local-packages',
-    'Python311',
-    'Scripts',
-    'pio.exe'
-  ),
+  join(homedir(), 'AppData', 'Local', 'Packages', 'PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0', 'LocalCache', 'local-packages', 'Python312', 'Scripts', 'pio.exe'),
+  join(homedir(), 'AppData', 'Local', 'Packages', 'PythonSoftwareFoundation.Python.3.11_qbz5n2kfra8p0', 'LocalCache', 'local-packages', 'Python311', 'Scripts', 'pio.exe'),
   join(homedir(), 'AppData', 'Local', 'Programs', 'Python', 'Python312', 'Scripts', 'pio.exe'),
   join(homedir(), 'AppData', 'Local', 'Programs', 'Python', 'Python311', 'Scripts', 'pio.exe'),
   join(homedir(), 'AppData', 'Roaming', 'Python', 'Python312', 'Scripts', 'pio.exe'),
@@ -58,7 +30,7 @@ async function resolvePio() {
       await access(candidate, constants.X_OK);
       return { cmd: candidate, args: ['run'] };
     } catch {
-      // not found or not executable
+      // try next candidate
     }
   }
   return { cmd: 'cmd', args: ['/c', 'pio', 'run'] };
@@ -103,92 +75,88 @@ export async function compileFirmware({
   emit(`[COMPILE] Project dir: ${projectDir}`);
   emit(`[COMPILE] Board: ${boardId}`);
 
-  try {
-    await writeFile(join(projectDir, 'platformio.ini'), buildIni(boardId), 'utf8');
+  await writeFile(join(projectDir, 'platformio.ini'), buildIni(boardId), 'utf8');
 
-    const srcDir = join(projectDir, 'src');
-    await mkdir(srcDir, { recursive: true });
+  const srcDir = join(projectDir, 'src');
+  await mkdir(srcDir, { recursive: true });
 
-    const preparedSource = source.includes('Arduino.h')
-      ? source
-      : `#include <Arduino.h>\n${source}`;
+  const preparedSource = source.includes('Arduino.h')
+    ? source
+    : `#include <Arduino.h>\n${source}`;
 
-    await writeFile(join(srcDir, 'main.cpp'), preparedSource, 'utf8');
+  await writeFile(join(srcDir, 'main.cpp'), preparedSource, 'utf8');
 
-    emit('[COMPILE] Running: pio run …');
+  emit('[COMPILE] Running: pio run …');
 
-    const { cmd, args } = await resolvePio();
-    emit(`[COMPILE] Spawning: ${cmd} ${args.join(' ')}`);
-    const child = spawn(cmd, args, { cwd: projectDir, env: { ...process.env } });
+  const { cmd, args } = await resolvePio();
+  emit(`[COMPILE] Spawning: ${cmd} ${args.join(' ')}`);
+  const child = spawn(cmd, args, { cwd: projectDir, env: { ...process.env } });
 
-    await new Promise((resolve, reject) => {
-      const killTimer = setTimeout(() => {
-        child.kill('SIGKILL');
-        reject(new Error(`Compile timed out after ${timeout / 1000}s`));
-      }, timeout);
+  await new Promise((resolve, reject) => {
+    const killTimer = setTimeout(() => {
+      child.kill('SIGKILL');
+      reject(new Error(`Compile timed out after ${timeout / 1000}s`));
+    }, timeout);
 
-      const handleData = (chunk) => {
-        const lines = chunk.toString().split(/\r?\n/);
-        for (const line of lines) {
-          if (line.trim()) emit(line);
-        }
-      };
+    const handleData = (chunk) => {
+      const lines = chunk.toString().split(/\r?\n/);
+      for (const line of lines) {
+        if (line.trim()) emit(line);
+      }
+    };
 
-      child.stdout.on('data', handleData);
-      child.stderr.on('data', handleData);
+    child.stdout.on('data', handleData);
+    child.stderr.on('data', handleData);
 
-      child.on('close', (code) => {
-        clearTimeout(killTimer);
-        if (code === 0) {
-          resolve();
-        } else {
-          reject(new Error(`pio run exited with code ${code}`));
-        }
-      });
-
-      child.on('error', (err) => {
-        clearTimeout(killTimer);
-        reject(new Error(`Failed to start pio: ${err.message}. Is PlatformIO installed? Run: pip install platformio`));
-      });
+    child.on('close', (code) => {
+      clearTimeout(killTimer);
+      if (code === 0) {
+        resolve();
+      } else {
+        reject(new Error(`pio run exited with code ${code}`));
+      }
     });
 
-    const binPath = findBin(projectDir);
-    if (!binPath) {
-      throw new Error('Compile succeeded but firmware.bin not found in .pio/build/target/');
-    }
+    child.on('error', (err) => {
+      clearTimeout(killTimer);
+      reject(new Error(`Failed to start pio: ${err.message}. Is PlatformIO installed? Run: pip install platformio`));
+    });
+  });
 
-    const firmwareBuf = await readFile(binPath);
-    const bootloaderPath = join(projectDir, '.pio', 'build', 'target', 'bootloader.bin');
-    const partitionsPath = join(projectDir, '.pio', 'build', 'target', 'partitions.bin');
-
-    let finalBuf = firmwareBuf;
-    let flashOffset = '0x10000';
-
-    if (existsSync(bootloaderPath) && existsSync(partitionsPath)) {
-      try {
-        const bootloaderBuf = await readFile(bootloaderPath);
-        const partitionsBuf = await readFile(partitionsPath);
-        const mergedSize = 0x10000 + firmwareBuf.length;
-        const mergedBuf = Buffer.alloc(mergedSize, 0xff);
-        bootloaderBuf.copy(mergedBuf, 0x1000);
-        partitionsBuf.copy(mergedBuf, 0x8000);
-        firmwareBuf.copy(mergedBuf, 0x10000);
-
-        finalBuf = mergedBuf;
-        flashOffset = '0x0';
-        emit(`[COMPILE] Built complete self-booting merged image (${mergedBuf.length} bytes @ 0x0)`);
-      } catch (err) {
-        emit(`[COMPILE] Note: Merging bootloader skipped: ${err.message}`);
-      }
-    }
-
-    const binBase64 = finalBuf.toString('base64');
-    const durationMs = Date.now() - startMs;
-
-    emit(`[COMPILE] Done — ${finalBuf.length} bytes in ${(durationMs / 1000).toFixed(1)}s`);
-
-    return { binBase64, binSize: finalBuf.length, offset: flashOffset, durationMs, log };
-  } finally {
-    // Keep cache
+  const binPath = findBin(projectDir);
+  if (!binPath) {
+    throw new Error('Compile succeeded but firmware.bin not found in .pio/build/target/');
   }
+
+  const firmwareBuf = await readFile(binPath);
+  const bootloaderPath = join(projectDir, '.pio', 'build', 'target', 'bootloader.bin');
+  const partitionsPath = join(projectDir, '.pio', 'build', 'target', 'partitions.bin');
+
+  let finalBuf = firmwareBuf;
+  let flashOffset = '0x10000';
+
+  if (existsSync(bootloaderPath) && existsSync(partitionsPath)) {
+    try {
+      const bootloaderBuf = await readFile(bootloaderPath);
+      const partitionsBuf = await readFile(partitionsPath);
+      const mergedSize = 0x10000 + firmwareBuf.length;
+      const mergedBuf = Buffer.alloc(mergedSize, 0xff);
+      bootloaderBuf.copy(mergedBuf, 0x1000);
+      partitionsBuf.copy(mergedBuf, 0x8000);
+      firmwareBuf.copy(mergedBuf, 0x10000);
+
+      finalBuf = mergedBuf;
+      flashOffset = '0x0';
+      emit(`[COMPILE] Built complete self-booting merged image (${mergedBuf.length} bytes @ 0x0)`);
+    } catch (err) {
+      emit(`[COMPILE] Note: Merging bootloader skipped: ${err.message}`);
+    }
+  }
+
+  const binBase64 = finalBuf.toString('base64');
+  const durationMs = Date.now() - startMs;
+
+  emit(`[COMPILE] Done — ${finalBuf.length} bytes in ${(durationMs / 1000).toFixed(1)}s`);
+
+  return { binBase64, binSize: finalBuf.length, offset: flashOffset, durationMs, log };
 }

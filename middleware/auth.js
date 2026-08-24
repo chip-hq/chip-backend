@@ -1,5 +1,3 @@
-// middleware/auth.js — Safe Firebase Token parsing & user extraction middleware.
-
 function decodeJwtPayload(token) {
   try {
     const parts = token.split('.');
@@ -12,10 +10,6 @@ function decodeJwtPayload(token) {
   }
 }
 
-/**
- * Express middleware to extract userId (Firebase UID) from incoming requests.
- * Checks Bearer JWT token payload (`sub` / `user_id`), fallback headers (`x-user-id`), or query/body.
- */
 export function extractUser(req, res, next) {
   try {
     const authHeader = req.headers.authorization;
@@ -30,7 +24,6 @@ export function extractUser(req, res, next) {
           req.userId = String(uid);
           return next();
         }
-        // Fallback if not a JWT string
         req.userId = token;
         return next();
       }
@@ -40,7 +33,7 @@ export function extractUser(req, res, next) {
       req.userId = String(directUserId);
     }
   } catch (err) {
-    console.warn('[auth] Non-fatal error parsing user token:', err?.message);
+    console.warn('[auth] Token parsing error:', err?.message);
   }
 
   next();

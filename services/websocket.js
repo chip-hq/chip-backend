@@ -1,9 +1,6 @@
-// services/websocket.js — Live WebSocket server and device socket management.
-
 import { WebSocketServer, WebSocket } from 'ws';
 import { upsertDevice, setDeviceConnected, updateJob } from './storage.js';
 
-// Live WebSocket sockets by deviceId.
 export const deviceSockets = new Map();
 
 export function setupWebSocket(server) {
@@ -12,7 +9,6 @@ export function setupWebSocket(server) {
   wss.on('connection', (ws, req) => {
     let deviceId = 'default_device';
 
-    // Register socket immediately so it is available for flash relays
     deviceSockets.set(deviceId, ws);
     upsertDevice({ deviceId, chip: 'ESP32', connected: true });
     console.log(`[WS] New client connection from ${req.socket.remoteAddress}`);
@@ -21,7 +17,6 @@ export function setupWebSocket(server) {
       try {
         const data = JSON.parse(message.toString());
 
-        // Registration message from browser dashboard
         if (data.type === 'register') {
           deviceId = data.deviceId || 'default_device';
           const userId = data.userId || data.uid || null;
@@ -36,7 +31,6 @@ export function setupWebSocket(server) {
           ws.send(JSON.stringify({ type: 'registered', deviceId, userId, status: 'ok' }));
         }
 
-        // Progress updates from browser flasher
         if (data.type === 'flash_progress') {
           updateJob(data.jobId, {
             progress: data.progress,
@@ -45,7 +39,6 @@ export function setupWebSocket(server) {
           });
         }
 
-        // Flash complete / error updates
         if (data.type === 'flash_complete') {
           updateJob(data.jobId, {
             progress: 100,

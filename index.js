@@ -1,5 +1,3 @@
-// index.js — Main application entry point for Chip backend.
-
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
@@ -23,10 +21,8 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
-// 1. OAuth 2.1 routes (/.well-known, /oauth/authorize, /oauth/token, /oauth/finalize)
 app.use(oauthRouter);
 
-// 2. User authentication middleware
 app.use((req, res, next) => {
   const authHeader = req.headers.authorization;
   if (authHeader && authHeader.startsWith('Bearer ')) {
@@ -37,13 +33,12 @@ app.use((req, res, next) => {
       req.userEmail = payload.email;
       return next();
     } catch {
-      // Not a Chip JWT — fall through to extractUser
+      // Fall through to extractUser
     }
   }
   extractUser(req, res, next);
 });
 
-// 3. Health check
 app.get('/health', (req, res) => {
   res.json({
     status: 'ok',
@@ -53,28 +48,23 @@ app.get('/health', (req, res) => {
   });
 });
 
-// 4. API Route Modules
 app.use(devicesRouter);
 app.use(jobsRouter);
 app.use(compileRouter);
 app.use(flashRouter);
 
-// 5. 404 & Centralized Error Handlers (must be after all routes)
 app.use(notFoundHandler);
 app.use(errorHandler);
 
-// 6. Create Server & Initialize WebSockets
 const server = createServer(app);
 setupWebSocket(server);
 
-// 7. Connect Database (best-effort) & Start Listening
 await initStorage();
 
 server.listen(PORT, () => {
-  console.log(`Chip Backend running with WebSocket support on port ${PORT}`);
+  console.log(`Chip Backend running on port ${PORT}`);
 });
 
-// 8. Graceful Shutdown
 async function shutdown(signal) {
   console.log(`\n[server] ${signal} received — shutting down.`);
   server.close();

@@ -1,5 +1,3 @@
-// routes/flash.js — Flash job creation and WebSocket payload relay.
-
 import { Router } from 'express';
 import { readFile } from 'fs/promises';
 import { existsSync } from 'fs';
@@ -16,7 +14,6 @@ const router = Router();
 const FIRMWARE_CACHE_PATH = join(homedir(), '.chip-build-cache', 'esp32dev', '.pio', 'build', 'esp32dev', 'firmware.bin');
 const FIRMWARE_B64_CACHE = join(homedir(), '.chip-build-cache', 'last_firmware.b64');
 
-// Trigger flash job (used by MCP flash_device or direct API)
 router.post('/api/flash', asyncRoute(async (req, res) => {
   const {
     jobId: compileJobId,
@@ -26,14 +23,12 @@ router.post('/api/flash', asyncRoute(async (req, res) => {
     filename: rawFilename = 'firmware.bin',
   } = req.body ?? {};
 
-  // Sanitize filename and deviceId
   const filename = typeof rawFilename === 'string' ? rawFilename.replace(/[^\w.\-]/g, '_') : 'firmware.bin';
   const targetDeviceId = typeof deviceId === 'string' ? deviceId.replace(/[^\w.\-]/g, '_') : 'default_device';
 
   let payloadBase64 = typeof rawBase64 === 'string' ? rawBase64 : null;
   let targetOffset = typeof requestedOffset === 'string' ? requestedOffset : null;
 
-  // If jobId was passed in binBase64 field (e.g. "compile_...")
   if (payloadBase64 && payloadBase64.startsWith('compile_')) {
     const compileJob = await getJob(payloadBase64);
     payloadBase64 = compileJob?.binBase64;
@@ -44,7 +39,6 @@ router.post('/api/flash', asyncRoute(async (req, res) => {
     targetOffset = compileJob?.offset || targetOffset || '0x0';
   }
 
-  // Fallback to latest compiled binary on disk if memory is empty
   if (!payloadBase64) {
     try {
       if (existsSync(FIRMWARE_B64_CACHE)) {
@@ -53,7 +47,7 @@ router.post('/api/flash', asyncRoute(async (req, res) => {
         payloadBase64 = (await readFile(FIRMWARE_CACHE_PATH)).toString('base64');
       }
     } catch {
-      // ignore
+      // fallback ignore
     }
   }
 
@@ -61,10 +55,8 @@ router.post('/api/flash', asyncRoute(async (req, res) => {
     return res.status(400).json({ error: 'No compiled binary found. Please run compile_firmware first.' });
   }
 
-  // Sanitize offset (must look like hex e.g. 0x0 or 0x10000)
   const offset = targetOffset && /^0x[0-9a-fA-F]+$/.test(targetOffset) ? targetOffset : '0x0';
 
-  // Resolve the target socket: the named device, else the first live one
   let finalTargetId = targetDeviceId;
   let socket = deviceSockets.get(targetDeviceId);
   if (!socket) {
@@ -90,7 +82,6 @@ router.post('/api/flash', asyncRoute(async (req, res) => {
     log: ['Job created, relaying firmware binary to browser dashboard...'],
   });
 
-  // Relay binary payload over WebSocket to browser flasher
   socket.send(
     JSON.stringify({
       type: 'flash_payload',
