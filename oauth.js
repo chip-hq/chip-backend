@@ -1,22 +1,16 @@
-// oauth.js — OAuth 2.1 Authorization Server for Chip MCP authentication.
-//
-// Flow:
-//   1. Claude hits /.well-known/oauth-authorization-server → discovers auth endpoints
-//   2. Claude redirects user to GET /oauth/authorize
-//   3. Backend creates session and redirects to Client App (http://localhost:5173/?sessionId=...)
-//   4. Client App verifies Backend + MCP live sync and shows "Approve & Connect"
-//   5. Client POSTs Firebase token to /oauth/finalize
-//   6. Backend verifies token, generates short-lived auth code, returns redirectUrl (back to Claude)
-//   7. Claude exchanges code at POST /oauth/token → receives 30-day JWT access token
+// oauth.js — Complete OAuth 2.1 Server with Dynamic Client Registration (RFC 7591) and PKCE for Claude.
 
-import { createHmac, randomBytes } from 'crypto';
+import { createHmac, createHash, randomBytes } from 'crypto';
 import express, { Router } from 'express';
 
 const router = Router();
 
 const SESSION_SECRET = process.env.SESSION_SECRET || 'chip-dev-secret-change-in-production';
 
-// Short-lived authorization codes (code → {userId, email, redirectUri, expires})
+// Registered OAuth clients (RFC 7591 Dynamic Client Registration)
+const registeredClients = new Map();
+
+// Short-lived authorization codes (code → {userId, email, redirectUri, codeChallenge, codeChallengeMethod, expires})
 const pendingCodes = new Map();
 
 // Cleanup expired codes every 5 minutes
@@ -55,7 +49,7 @@ export function verifyJWT(token) {
   return payload;
 }
 
-// ── Discovery ─────────────────────────────────────────────────────────────────
+// ── Discovery (RFC 8414) ──────────────────────────────────────────────────────
 
 router.get('/.well-known/oauth-authorization-server', (req, res) => {
   const base = `${req.protocol}://${req.get('host')}`;
@@ -63,17 +57,55 @@ router.get('/.well-known/oauth-authorization-server', (req, res) => {
     issuer: base,
     authorization_endpoint: `${base}/oauth/authorize`,
     token_endpoint: `${base}/oauth/token`,
+    registration_endpoint: `${base}/oauth/register`,
     response_types_supported: ['code'],
     grant_types_supported: ['authorization_code'],
     code_challenge_methods_supported: ['S256', 'plain'],
+    token_endpoint_auth_methods_supported: ['none', 'client_secret_post', 'client_secret_basic'],
     scopes_supported: ['openid'],
   });
 });
 
-// ── Authorization Endpoint — redirects to the Client App for Approval ────────
+// ── Dynamic Client Registration (RFC 7591) ───────────────────────────────────
+// Claude calls this automatically to register itself and obtain a client_id.
+
+router.post('/oauth/register', express.json(), (req, res) => {
+  const { redirect_uris = [], client_name = 'Claude' } = req.body || {};
+  const clientId = `client_${randomBytes(16).toString('hex')}`;
+  const clientSecret = `secret_${randomBytes(24).toString('hex')}`;
+
+  const clientRecord = {
+    client_id: clientId,
+    client_secret: clientSecret,
+    client_name,
+    redirect_uris,
+    created_at: Date.now(),
+  };
+
+  registeredClients.set(clientId, clientRecord);
+  console.log(`[OAuth] Dynamic client registered: ${client_name} (${clientId})`);
+
+  res.status(201).json({
+    client_id: clientId,
+    client_secret: clientSecret,
+    client_name,
+    redirect_uris,
+    grant_types: ['authorization_code'],
+    response_types: ['code'],
+    token_endpoint_auth_method: 'none',
+  });
+});
+
+// ── Authorization Endpoint — redirects to Client App for Approval ────────────
 
 router.get('/oauth/authorize', (req, res) => {
-  const { redirect_uri, state } = req.query;
+  const {
+    redirect_uri,
+    state,
+    client_id,
+    code_challenge,
+    code_challenge_method = 'S256',
+  } = req.query;
 
   if (!redirect_uri) {
     return res.status(400).send('Missing redirect_uri');
@@ -81,23 +113,27 @@ router.get('/oauth/authorize', (req, res) => {
 
   const sessionId = randomBytes(16).toString('hex');
   pendingCodes.set(`session:${sessionId}`, {
-    redirectUri: redirect_uri,
-    state: state || '',
+    clientId: client_id || null,
+    redirectUri: String(redirect_uri),
+    state: state ? String(state) : '',
+    codeChallenge: code_challenge ? String(code_challenge) : null,
+    codeChallengeMethod: String(code_challenge_method),
     expires: Date.now() + 10 * 60 * 1000,
   });
 
   const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
   const clientAuthUrl = new URL(frontendUrl);
   clientAuthUrl.searchParams.set('sessionId', sessionId);
-  clientAuthUrl.searchParams.set('redirect_uri', redirect_uri);
-  if (state) clientAuthUrl.searchParams.set('state', state);
+  clientAuthUrl.searchParams.set('redirect_uri', String(redirect_uri));
+  if (state) clientAuthUrl.searchParams.set('state', String(state));
 
+  console.log(`[OAuth] Authorize requested. Redirecting to frontend: ${clientAuthUrl.toString()}`);
   return res.redirect(clientAuthUrl.toString());
 });
 
 // ── Finalize — receives Firebase ID token from the Client App Approval Box ───
 
-router.post('/oauth/finalize', async (req, res) => {
+router.post('/oauth/finalize', express.json(), async (req, res) => {
   const { idToken, sessionId } = req.body || {};
 
   if (!idToken || !sessionId) {
@@ -128,6 +164,8 @@ router.post('/oauth/finalize', async (req, res) => {
     userId: firebaseUid,
     email,
     redirectUri: session.redirectUri,
+    codeChallenge: session.codeChallenge,
+    codeChallengeMethod: session.codeChallengeMethod,
     expires: Date.now() + 5 * 60 * 1000,
   });
   pendingCodes.delete(`session:${sessionId}`);
@@ -143,8 +181,8 @@ router.post('/oauth/finalize', async (req, res) => {
 
 // ── Token Endpoint — Claude exchanges code for access token ──────────────────
 
-router.post('/oauth/token', express.urlencoded({ extended: false }), (req, res) => {
-  const { code, grant_type } = req.body || {};
+router.post('/oauth/token', express.urlencoded({ extended: false }), express.json(), (req, res) => {
+  const { code, grant_type, code_verifier } = req.body || {};
 
   if (grant_type !== 'authorization_code') {
     return res.status(400).json({ error: 'unsupported_grant_type' });
@@ -157,6 +195,21 @@ router.post('/oauth/token', express.urlencoded({ extended: false }), (req, res) 
   const codeData = pendingCodes.get(`code:${code}`);
   if (!codeData || codeData.expires < Date.now()) {
     return res.status(400).json({ error: 'invalid_grant', error_description: 'Code expired or invalid' });
+  }
+
+  // PKCE verification
+  if (codeData.codeChallenge && code_verifier) {
+    let computed;
+    if (codeData.codeChallengeMethod === 'plain') {
+      computed = code_verifier;
+    } else {
+      computed = createHash('sha256').update(code_verifier).digest('base64url');
+    }
+
+    if (computed !== codeData.codeChallenge) {
+      console.warn('[OAuth] PKCE verification failed');
+      return res.status(400).json({ error: 'invalid_grant', error_description: 'PKCE verification failed' });
+    }
   }
 
   pendingCodes.delete(`code:${code}`);
