@@ -163,6 +163,21 @@ export async function listDevices(userId = null) {
   return userId ? all.filter((d) => d.userId === userId) : all;
 }
 
+// Look up a single device doc by deviceId (memory-first)
+export async function getDevice(deviceId) {
+  const mem = memDevices.get(deviceId);
+  if (mem) return mem;
+  if (canUseMongo()) {
+    try {
+      return await db.collection('devices').findOne({ deviceId }, { projection: { _id: 0 } });
+    } catch (err) {
+      warn('getDevice', err);
+    }
+  }
+  return null;
+}
+
+
 // --- Jobs --------------------------------------------------------------------
 
 // Per-job serialized Mongo write chain. Memory is the authoritative live copy;

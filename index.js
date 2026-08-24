@@ -17,6 +17,7 @@ import {
   upsertDevice,
   setDeviceConnected,
   listDevices,
+  getDevice,
   createJob,
   getJob,
   updateJob,
@@ -24,6 +25,7 @@ import {
 } from './storage.js';
 import { compileFirmware } from './platformio-runner.js';
 import { extractUser } from './auth.js';
+import oauthRouter, { verifyJWT } from './oauth.js';
 
 dotenv.config();
 
@@ -32,7 +34,26 @@ const PORT = process.env.PORT || 3000;
 
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
-app.use(extractUser);
+
+// Mount OAuth 2.1 routes (/.well-known, /oauth/authorize, /oauth/token, /oauth/finalize)
+app.use(oauthRouter);
+
+// Unified user extraction: check Bearer JWT (issued by OAuth) first, then fallback headers
+app.use((req, res, next) => {
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    const token = authHeader.split('Bearer ')[1]?.trim();
+    try {
+      const payload = verifyJWT(token);
+      req.userId = payload.sub;
+      req.userEmail = payload.email;
+      return next();
+    } catch {
+      // Not a Chip JWT — fall through to extractUser
+    }
+  }
+  extractUser(req, res, next);
+});
 
 const server = createServer(app);
 const wss = new WebSocketServer({ server });
@@ -192,7 +213,10 @@ app.post('/api/flash', async (req, res) => {
   }
 
   const flashJobId = `flash_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-  const userId = req.userId || req.body?.userId || null;
+
+  // Inherit userId from the registered device (set when browser dashboard connected)
+  const deviceDoc = await getDevice(targetId);
+  const userId = req.userId || req.body?.userId || deviceDoc?.userId || null;
 
   createJob({
     jobId: flashJobId,
@@ -252,7 +276,11 @@ app.post('/api/compile', async (req, res) => {
   }
 
   const jobId = `compile_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-  const userId = req.userId || req.body?.userId || null;
+
+  // Inherit userId from the first connected device (compile isn't device-specific)
+  const anyDevice = Array.from(deviceSockets.keys())[0];
+  const deviceDoc = anyDevice ? await getDevice(anyDevice) : null;
+  const userId = req.userId || req.body?.userId || deviceDoc?.userId || null;
 
   createJob({
     jobId,
