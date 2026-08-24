@@ -9,6 +9,7 @@ import { WebSocket } from 'ws';
 import { getJob, createJob } from '../services/storage.js';
 import { deviceSockets } from '../services/websocket.js';
 import { resolveUserId } from '../services/user-resolver.js';
+import { asyncRoute } from '../middleware/errorHandler.js';
 
 const router = Router();
 
@@ -16,24 +17,28 @@ const FIRMWARE_CACHE_PATH = join(homedir(), '.chip-build-cache', 'esp32dev', '.p
 const FIRMWARE_B64_CACHE = join(homedir(), '.chip-build-cache', 'last_firmware.b64');
 
 // Trigger flash job (used by MCP flash_device or direct API)
-router.post('/api/flash', async (req, res) => {
+router.post('/api/flash', asyncRoute(async (req, res) => {
   const {
     jobId: compileJobId,
     binBase64: rawBase64,
     deviceId = 'default_device',
     offset: requestedOffset,
-    filename = 'firmware.bin',
+    filename: rawFilename = 'firmware.bin',
   } = req.body ?? {};
 
-  let payloadBase64 = rawBase64;
-  let targetOffset = requestedOffset;
+  // Sanitize filename and deviceId
+  const filename = typeof rawFilename === 'string' ? rawFilename.replace(/[^\w.\-]/g, '_') : 'firmware.bin';
+  const targetDeviceId = typeof deviceId === 'string' ? deviceId.replace(/[^\w.\-]/g, '_') : 'default_device';
+
+  let payloadBase64 = typeof rawBase64 === 'string' ? rawBase64 : null;
+  let targetOffset = typeof requestedOffset === 'string' ? requestedOffset : null;
 
   // If jobId was passed in binBase64 field (e.g. "compile_...")
   if (payloadBase64 && payloadBase64.startsWith('compile_')) {
     const compileJob = await getJob(payloadBase64);
     payloadBase64 = compileJob?.binBase64;
     targetOffset = compileJob?.offset || targetOffset || '0x0';
-  } else if (!payloadBase64 && compileJobId) {
+  } else if (!payloadBase64 && compileJobId && typeof compileJobId === 'string') {
     const compileJob = await getJob(compileJobId);
     payloadBase64 = compileJob?.binBase64;
     targetOffset = compileJob?.offset || targetOffset || '0x0';
@@ -56,27 +61,28 @@ router.post('/api/flash', async (req, res) => {
     return res.status(400).json({ error: 'No compiled binary found. Please run compile_firmware first.' });
   }
 
-  const offset = targetOffset || '0x0';
+  // Sanitize offset (must look like hex e.g. 0x0 or 0x10000)
+  const offset = targetOffset && /^0x[0-9a-fA-F]+$/.test(targetOffset) ? targetOffset : '0x0';
 
   // Resolve the target socket: the named device, else the first live one
-  let targetId = deviceId;
-  let socket = deviceSockets.get(deviceId);
+  let finalTargetId = targetDeviceId;
+  let socket = deviceSockets.get(targetDeviceId);
   if (!socket) {
     const first = deviceSockets.entries().next().value;
-    if (first) [targetId, socket] = first;
+    if (first) [finalTargetId, socket] = first;
   }
 
   if (!socket || socket.readyState !== WebSocket.OPEN) {
-    return res.status(404).json({ error: `No active browser connected for device "${deviceId}"` });
+    return res.status(404).json({ error: `No active browser connected for device "${targetDeviceId}"` });
   }
 
   const flashJobId = `flash_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-  const userId = await resolveUserId(req, targetId);
+  const userId = await resolveUserId(req, finalTargetId);
 
   createJob({
     jobId: flashJobId,
     userId,
-    deviceId: targetId,
+    deviceId: finalTargetId,
     filename,
     offset,
     status: 'started',
@@ -99,8 +105,8 @@ router.post('/api/flash', async (req, res) => {
     jobId: flashJobId,
     status: 'started',
     offset,
-    message: `Firmware relayed to browser dashboard for ${targetId}`,
+    message: `Firmware relayed to browser dashboard for ${finalTargetId}`,
   });
-});
+}));
 
 export default router;

@@ -6,13 +6,14 @@ Node.js + Express server that handles firmware compilation, device flashing, job
 
 ```
 backend/
-├── index.js                        ← Entry point (server bootstrap, ~60 lines)
+├── index.js                        ← Entry point (server bootstrap & route mounting)
 │
 ├── middleware/
-│   └── auth.js                     ← extractUser() Firebase token middleware
+│   ├── auth.js                     ← extractUser() Firebase token middleware
+│   └── errorHandler.js             ← Centralized error catching & data masking
 │
 ├── services/
-│   ├── storage.js                  ← MongoDB + in-memory persistence
+│   ├── storage.js                  ← MongoDB (pooled, SSL, masked) + in-memory fallback
 │   ├── websocket.js                ← WebSocket server + device socket registry
 │   ├── user-resolver.js            ← resolveUserId() helper
 │   └── platformio-runner.js        ← PlatformIO compiler engine
@@ -25,11 +26,23 @@ backend/
     └── flash.js                    ← POST /api/flash
 ```
 
+## Security & Resource Management Features
+
+- **Connection Pooling**: Configured with `minPoolSize` (2) and `maxPoolSize` (20) limits to avoid connection exhaustion under high concurrency.
+- **Idle & Socket Timeouts**: `maxIdleTimeMS` (30s), `socketTimeoutMS` (45s), and `connectTimeoutMS` (10s) to reclaim inactive database resources.
+- **Connection Leak Prevention**: Drivers use auto-closing cursors and write queues with promise settlements (`.finally()`).
+- **SSL/TLS Encryption**: `tls: true` enforced on MongoDB client connections for encrypted transit.
+- **Parameterized Queries**: All queries structured via native driver document filters (protecting against NoSQL injection).
+- **Data Masking**: MongoDB internal IDs (`_id`) and system internals are masked from API responses.
+- **Centralized Error Handling**: Express middleware catches unexpected errors and returns sanitized, client-safe error messages while logging full stack traces server-side.
+- **Graceful Fallbacks**: In-memory store automatically serves requests if MongoDB becomes temporarily unavailable.
+- **N+1 Query Resolution**: Batch fetching with indexes on `jobId`, `userId`, `deviceId`, and `createdAt`.
+
 ## API Endpoints
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/health` | Server health check |
+| `GET` | `/health` | Server health check & DB status |
 | `GET` | `/api/devices` | List registered browser devices |
 | `GET` | `/api/jobs` | List all jobs in history |
 | `GET` | `/api/jobs/:jobId` | Get a single job status |
@@ -61,10 +74,13 @@ npm run dev
 
 See [`.env.example`](.env.example) for all available options. Key variables:
 
-| Variable | Description |
-|----------|-------------|
-| `PORT` | Port to listen on (default: `3000`) |
-| `MONGODB_URI` | MongoDB connection string (optional — falls back to in-memory) |
-| `MONGODB_DB` | Database name (default: `chip`) |
-| `FRONTEND_URL` | Client app URL for OAuth redirects (default: `http://localhost:5173`) |
-| `SESSION_SECRET` | HMAC secret for signing JWT tokens |
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `PORT` | Port to listen on | `3000` |
+| `MONGODB_URI` | MongoDB connection string (optional — falls back to in-memory) | — |
+| `MONGODB_DB` | Database name | `chip` |
+| `MONGODB_MIN_POOL` | Minimum connection pool size | `2` |
+| `MONGODB_MAX_POOL` | Maximum connection pool size | `20` |
+| `MONGODB_SSL` | Enforce SSL/TLS encryption (`true`/`false`) | `true` |
+| `FRONTEND_URL` | Client app URL for OAuth redirects | `http://localhost:5173` |
+| `SESSION_SECRET` | HMAC secret for signing JWT tokens | `chip-dev-secret` |

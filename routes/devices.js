@@ -4,12 +4,13 @@ import { Router } from 'express';
 import { listDevices } from '../services/storage.js';
 import { deviceSockets } from '../services/websocket.js';
 import { resolveUserId } from '../services/user-resolver.js';
+import { asyncRoute } from '../middleware/errorHandler.js';
 
 const router = Router();
 
 // List known browser devices (used by MCP list_devices or frontend).
-router.get('/api/devices', async (req, res) => {
-  const targetUserId = req.userId || req.query.userId || null;
+router.get('/api/devices', asyncRoute(async (req, res) => {
+  const targetUserId = req.userId || (typeof req.query.userId === 'string' ? req.query.userId : null);
   const stored = await listDevices(targetUserId);
   const storedMap = new Map(stored.map((d) => [d.deviceId, d]));
 
@@ -23,6 +24,6 @@ router.get('/api/devices', async (req, res) => {
   }
 
   res.json({ devices: Array.from(storedMap.values()) });
-});
+}));
 
 export default router;

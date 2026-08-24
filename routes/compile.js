@@ -1,26 +1,34 @@
 // routes/compile.js — PlatformIO firmware compilation endpoint.
 
 import { Router } from 'express';
-import { readFile, writeFile, mkdir } from 'fs/promises';
-import { existsSync } from 'fs';
+import { writeFile, mkdir } from 'fs/promises';
 import { join } from 'path';
 import { homedir } from 'os';
 import { createJob, updateJob } from '../services/storage.js';
 import { compileFirmware } from '../services/platformio-runner.js';
 import { deviceSockets } from '../services/websocket.js';
 import { resolveUserId } from '../services/user-resolver.js';
+import { asyncRoute } from '../middleware/errorHandler.js';
 
 const router = Router();
 
 const FIRMWARE_B64_CACHE = join(homedir(), '.chip-build-cache', 'last_firmware.b64');
 
+// Allowed board identifiers for input validation
+const ALLOWED_BOARDS = new Set(['esp32', 'esp32dev', 'esp32s2', 'esp32s3', 'esp32c3']);
+
 // Compile firmware via PlatformIO (used by MCP compile_firmware and direct API)
-router.post('/api/compile', async (req, res) => {
-  const { source, board = 'esp32' } = req.body;
+router.post('/api/compile', asyncRoute(async (req, res) => {
+  const { source, board: rawBoard = 'esp32' } = req.body || {};
 
   if (!source || typeof source !== 'string' || source.trim().length === 0) {
     return res.status(400).json({ error: '"source" (C++ string) is required' });
   }
+
+  // Sanitize board identifier
+  const board = typeof rawBoard === 'string' && ALLOWED_BOARDS.has(rawBoard.toLowerCase())
+    ? rawBoard.toLowerCase()
+    : 'esp32';
 
   const jobId = `compile_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
   const anyDevice = Array.from(deviceSockets.keys())[0];
@@ -83,8 +91,8 @@ router.post('/api/compile', async (req, res) => {
   } catch (err) {
     updateJob(jobId, { status: 'error', error: err.message, logLine: `Error: ${err.message}` });
     console.error(`[COMPILE] Job ${jobId} failed:`, err.message);
-    return res.status(500).json({ jobId, status: 'error', error: err.message });
+    return res.status(500).json({ jobId, status: 'error', error: 'Firmware compilation failed. Please check your C++ syntax.' });
   }
-});
+}));
 
 export default router;

@@ -6,6 +6,7 @@ import dotenv from 'dotenv';
 import { createServer } from 'http';
 import { initStorage, closeStorage, isDbConnected } from './services/storage.js';
 import { extractUser } from './middleware/auth.js';
+import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
 import oauthRouter, { verifyJWT } from './routes/oauth.js';
 import { setupWebSocket, deviceSockets } from './services/websocket.js';
 
@@ -58,18 +59,22 @@ app.use(jobsRouter);
 app.use(compileRouter);
 app.use(flashRouter);
 
-// 5. Create Server & Initialize WebSockets
+// 5. 404 & Centralized Error Handlers (must be after all routes)
+app.use(notFoundHandler);
+app.use(errorHandler);
+
+// 6. Create Server & Initialize WebSockets
 const server = createServer(app);
 setupWebSocket(server);
 
-// 6. Connect Database (best-effort) & Start Listening
+// 7. Connect Database (best-effort) & Start Listening
 await initStorage();
 
 server.listen(PORT, () => {
   console.log(`Chip Backend running with WebSocket support on port ${PORT}`);
 });
 
-// 7. Graceful Shutdown
+// 8. Graceful Shutdown
 async function shutdown(signal) {
   console.log(`\n[server] ${signal} received — shutting down.`);
   server.close();

@@ -2,6 +2,7 @@
 
 import { createHmac, createHash, randomBytes } from 'crypto';
 import express, { Router } from 'express';
+import { asyncRoute } from '../middleware/errorHandler.js';
 
 const router = Router();
 
@@ -68,7 +69,7 @@ router.get('/.well-known/oauth-authorization-server', (req, res) => {
 
 // ── Dynamic Client Registration (RFC 7591) ───────────────────────────────────
 
-router.post('/oauth/register', express.json(), (req, res) => {
+router.post('/oauth/register', express.json(), asyncRoute(async (req, res) => {
   const { redirect_uris = [], client_name = 'Claude' } = req.body || {};
   const clientId = `client_${randomBytes(16).toString('hex')}`;
   const clientSecret = `secret_${randomBytes(24).toString('hex')}`;
@@ -76,28 +77,28 @@ router.post('/oauth/register', express.json(), (req, res) => {
   const clientRecord = {
     client_id: clientId,
     client_secret: clientSecret,
-    client_name,
-    redirect_uris,
+    client_name: typeof client_name === 'string' ? client_name.substring(0, 100) : 'Agent',
+    redirect_uris: Array.isArray(redirect_uris) ? redirect_uris.filter((u) => typeof u === 'string') : [],
     created_at: Date.now(),
   };
 
   registeredClients.set(clientId, clientRecord);
-  console.log(`[OAuth] Dynamic client registered: ${client_name} (${clientId})`);
+  console.log(`[OAuth] Dynamic client registered: ${clientRecord.client_name} (${clientId})`);
 
   res.status(201).json({
     client_id: clientId,
     client_secret: clientSecret,
-    client_name,
-    redirect_uris,
+    client_name: clientRecord.client_name,
+    redirect_uris: clientRecord.redirect_uris,
     grant_types: ['authorization_code'],
     response_types: ['code'],
     token_endpoint_auth_method: 'none',
   });
-});
+}));
 
 // ── Authorization Endpoint — redirects to Client App for Approval ────────────
 
-router.get('/oauth/authorize', (req, res) => {
+router.get('/oauth/authorize', asyncRoute(async (req, res) => {
   const {
     redirect_uri,
     state,
@@ -106,13 +107,20 @@ router.get('/oauth/authorize', (req, res) => {
     code_challenge_method = 'S256',
   } = req.query;
 
-  if (!redirect_uri) {
+  if (!redirect_uri || typeof redirect_uri !== 'string') {
     return res.status(400).send('Missing redirect_uri');
+  }
+
+  // Validate redirect_uri format
+  try {
+    new URL(redirect_uri);
+  } catch {
+    return res.status(400).send('Invalid redirect_uri format');
   }
 
   const sessionId = randomBytes(16).toString('hex');
   pendingCodes.set(`session:${sessionId}`, {
-    clientId: client_id || null,
+    clientId: typeof client_id === 'string' ? client_id : null,
     redirectUri: String(redirect_uri),
     state: state ? String(state) : '',
     codeChallenge: code_challenge ? String(code_challenge) : null,
@@ -128,14 +136,14 @@ router.get('/oauth/authorize', (req, res) => {
 
   console.log(`[OAuth] Authorize requested. Redirecting to frontend: ${clientAuthUrl.toString()}`);
   return res.redirect(clientAuthUrl.toString());
-});
+}));
 
 // ── Finalize — receives Firebase ID token from the Client App Approval Box ───
 
-router.post('/oauth/finalize', express.json(), async (req, res) => {
+router.post('/oauth/finalize', express.json(), asyncRoute(async (req, res) => {
   const { idToken, sessionId } = req.body || {};
 
-  if (!idToken || !sessionId) {
+  if (!idToken || !sessionId || typeof idToken !== 'string' || typeof sessionId !== 'string') {
     return res.status(400).json({ error: 'Missing idToken or sessionId' });
   }
 
@@ -153,7 +161,7 @@ router.post('/oauth/finalize', express.json(), async (req, res) => {
     email = payload.email;
     if (!firebaseUid) throw new Error('No UID in token');
   } catch {
-    return res.status(401).json({ error: 'Invalid Firebase ID token' });
+    return res.status(401).json({ error: 'Invalid authentication token' });
   }
 
   const code = randomBytes(24).toString('hex');
@@ -173,18 +181,18 @@ router.post('/oauth/finalize', express.json(), async (req, res) => {
 
   console.log(`[OAuth] Connection approved on client by: ${email} (${firebaseUid})`);
   res.json({ redirectUrl: redirectUrl.toString() });
-});
+}));
 
 // ── Token Endpoint — Claude exchanges code for access token ──────────────────
 
-router.post('/oauth/token', express.urlencoded({ extended: false }), express.json(), (req, res) => {
+router.post('/oauth/token', express.urlencoded({ extended: false }), express.json(), asyncRoute(async (req, res) => {
   const { code, grant_type, code_verifier } = req.body || {};
 
   if (grant_type !== 'authorization_code') {
     return res.status(400).json({ error: 'unsupported_grant_type' });
   }
 
-  if (!code) {
+  if (!code || typeof code !== 'string') {
     return res.status(400).json({ error: 'missing_code' });
   }
 
@@ -223,6 +231,6 @@ router.post('/oauth/token', express.urlencoded({ extended: false }), express.jso
     expires_in: 30 * 24 * 3600,
     scope: 'chip:mcp',
   });
-});
+}));
 
 export default router;
