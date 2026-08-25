@@ -12,6 +12,7 @@ import devicesRouter from './routes/devices.js';
 import jobsRouter from './routes/jobs.js';
 import compileRouter from './routes/compile.js';
 import flashRouter from './routes/flash.js';
+import preferencesRouter from './routes/preferences.js';
 
 dotenv.config();
 
@@ -52,6 +53,7 @@ app.use(devicesRouter);
 app.use(jobsRouter);
 app.use(compileRouter);
 app.use(flashRouter);
+app.use(preferencesRouter);
 
 app.use(notFoundHandler);
 app.use(errorHandler);

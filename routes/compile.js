@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { writeFile, mkdir } from 'fs/promises';
 import { join } from 'path';
 import { homedir } from 'os';
-import { createJob, updateJob, recordAgentConnection } from '../services/storage.js';
+import { createJob, updateJob, recordAgentConnection, getPreference } from '../services/storage.js';
 import { compileFirmware } from '../services/platformio-runner.js';
 import { deviceSockets } from '../services/websocket.js';
 import { resolveUserId } from '../services/user-resolver.js';
@@ -29,6 +29,18 @@ router.post('/api/compile', asyncRoute(async (req, res) => {
       userId: req.userId,
       clientName: 'Claude / MCP Agent',
       email: req.userEmail || null,
+    });
+  }
+
+  // Check if the user requires a Web Companion from their settings
+  const companionRequired = await getPreference(req.userId, 'webCompanion', false);
+  if (companionRequired && (!webCompanion || typeof webCompanion !== 'string' || webCompanion.trim().length === 0)) {
+    return res.status(400).json({
+      error: 'Web Companion required: The user has enabled AI Web Companion in their settings. ' +
+             'You MUST include a "webCompanion" field containing a self-contained HTML/CSS/JS string that ' +
+             'visually simulates what this firmware does on the ESP32 (e.g. animated ON/OFF indicator for LED blink, ' +
+             'live gauge for sensor data, slider controls for PWM). ' +
+             'Please retry compile_firmware with the webCompanion field included.',
     });
   }
 

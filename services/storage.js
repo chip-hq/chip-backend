@@ -4,6 +4,7 @@ import dns from 'node:dns';
 const memDevices = new Map();
 const memJobs = new Map();
 const memAgents = new Map();
+const memPreferences = new Map(); // userId -> { webCompanion: boolean }
 
 let client = null;
 let db = null;
@@ -65,6 +66,7 @@ export async function initStorage() {
       db.collection('devices').createIndex({ deviceId: 1 }, { unique: true }),
       db.collection('devices').createIndex({ userId: 1, deviceId: 1 }),
       db.collection('agents').createIndex({ userId: 1 }, { unique: true }),
+      db.collection('preferences').createIndex({ userId: 1 }, { unique: true }),
     ]);
 
     mongoReady = true;
@@ -324,4 +326,48 @@ export async function getAgentStatus(userId) {
     }
   }
   return { connected: false };
+}
+
+// ── User Preferences ─────────────────────────────────────────────────────────
+
+export async function setPreference(userId, key, value) {
+  if (!userId) return;
+  const uid = String(userId);
+  const current = memPreferences.get(uid) || {};
+  const updated = { ...current, [key]: value, userId: uid, updatedAt: new Date() };
+  memPreferences.set(uid, updated);
+
+  if (canUseMongo()) {
+    try {
+      await db.collection('preferences').updateOne(
+        { userId: uid },
+        { $set: { [key]: value, updatedAt: updated.updatedAt } },
+        { upsert: true }
+      );
+    } catch (err) {
+      warn('setPreference', err);
+    }
+  }
+}
+
+export async function getPreference(userId, key, defaultValue = null) {
+  if (!userId) return defaultValue;
+  const uid = String(userId);
+
+  // Check in-memory first
+  const mem = memPreferences.get(uid);
+  if (mem && key in mem) return mem[key];
+
+  if (canUseMongo()) {
+    try {
+      const doc = await db.collection('preferences').findOne({ userId: uid }, SAFE);
+      if (doc) {
+        memPreferences.set(uid, doc);
+        return key in doc ? doc[key] : defaultValue;
+      }
+    } catch (err) {
+      warn('getPreference', err);
+    }
+  }
+  return defaultValue;
 }
