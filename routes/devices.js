@@ -23,7 +23,7 @@ router.get('/api/devices', asyncRoute(async (req, res) => {
   for (const [id, socket] of deviceSockets.entries()) {
     const socketUser = socket.userId || null;
     const matchesUser = !targetUserId || socketUser === targetUserId || !socketUser;
-    
+
     if (matchesUser) {
       if (storedMap.has(id)) {
         storedMap.get(id).connected = true;

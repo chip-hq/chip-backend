@@ -12,6 +12,12 @@ backend/
 │   ├── auth.js                     ← extractUser() Firebase token middleware
 │   └── errorHandler.js             ← Centralized error catching & data masking
 │
+├── tiers/
+│   ├── free-tier.js                ← Free mode algorithm & quota limits (mock)
+│   ├── pro-tier.js                 ← Pro mode priority algorithm (mock)
+│   ├── tier-evaluator.js           ← Tier resolution & quota evaluator
+│   └── index.js                    ← Unified tiers interface
+│
 ├── services/
 │   ├── storage.js                  ← MongoDB (pooled, SSL, masked) + in-memory fallback
 │   ├── websocket.js                ← WebSocket server + device socket registry

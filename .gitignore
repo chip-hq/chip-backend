@@ -17,3 +17,6 @@ logs/
 
 # System files
 .DS_Store
+
+# Tiers (WIP)
+tiers/
