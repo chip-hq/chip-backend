@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { listJobs, getJob, clearJobs } from '../services/storage.js';
+import { listJobs, getJob, clearJobs, updateJob } from '../services/storage.js';
 import { resolveUserId } from '../services/user-resolver.js';
 import { asyncRoute } from '../middleware/errorHandler.js';
 
@@ -16,6 +16,22 @@ router.get('/api/jobs/:jobId', asyncRoute(async (req, res) => {
   const job = await getJob(jobId);
   if (!job) return res.status(404).json({ error: 'Job not found' });
   res.json(job);
+}));
+
+router.patch('/api/jobs/:jobId/status', asyncRoute(async (req, res) => {
+  const { jobId } = req.params;
+  const { status, progress, error } = req.body || {};
+  const job = await getJob(jobId);
+  if (!job) return res.status(404).json({ error: 'Job not found' });
+
+  updateJob(jobId, {
+    status: status || job.status,
+    progress: typeof progress === 'number' ? progress : job.progress,
+    error: error !== undefined ? error : job.error,
+    logLine: status === 'done' ? 'Flashing completed successfully' : undefined,
+  });
+
+  res.json({ ok: true, jobId, status: status || job.status, progress });
 }));
 
 router.get('/api/jobs/:jobId/download', asyncRoute(async (req, res) => {
