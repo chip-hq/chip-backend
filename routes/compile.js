@@ -14,7 +14,7 @@ const FIRMWARE_B64_CACHE = join(homedir(), '.chip-build-cache', 'last_firmware.b
 const ALLOWED_BOARDS = new Set(['esp32', 'esp32dev', 'esp32s2', 'esp32s3', 'esp32c3']);
 
 router.post('/api/compile', asyncRoute(async (req, res) => {
-  const { source, board: rawBoard = 'esp32' } = req.body || {};
+  const { source, board: rawBoard = 'esp32', webCompanion } = req.body || {};
 
   if (!source || typeof source !== 'string' || source.trim().length === 0) {
     return res.status(400).json({ error: '"source" (C++ string) is required' });
@@ -42,13 +42,14 @@ router.post('/api/compile', asyncRoute(async (req, res) => {
     phase: 'compile',
     board,
     sourceCode: source,
+    webCompanion: typeof webCompanion === 'string' ? webCompanion : null,
     filename: `firmware_${board}.bin`,
     status: 'compiling',
     progress: 0,
     log: ['Compile job started…'],
   });
 
-  console.log(`[COMPILE] Job ${jobId} started — board: ${board}`);
+  console.log(`[COMPILE] Job ${jobId} started — board: ${board}${webCompanion ? ' (with Web Companion)' : ''}`);
 
   try {
     const result = await compileFirmware({
@@ -68,6 +69,7 @@ router.post('/api/compile', asyncRoute(async (req, res) => {
       offset: result.offset || '0x0',
       filename: `firmware_${board}.bin`,
       sourceCode: source,
+      webCompanion: typeof webCompanion === 'string' ? webCompanion : null,
       logLine: `Done — ${result.binSize} bytes in ${(result.durationMs / 1000).toFixed(1)}s`,
     });
 

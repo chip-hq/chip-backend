@@ -215,7 +215,7 @@ export async function getJob(jobId) {
 
 export function updateJob(
   jobId,
-  { status, progress, error, logLine, phase, binBase64, binSize, offset, filename, sourceCode } = {}
+  { status, progress, error, logLine, phase, binBase64, binSize, offset, filename, sourceCode, webCompanion } = {}
 ) {
   const job = memJobs.get(jobId);
   if (!job) return;
@@ -229,6 +229,7 @@ export function updateJob(
   if (offset !== undefined) job.offset = offset;
   if (filename !== undefined) job.filename = filename;
   if (sourceCode !== undefined) job.sourceCode = sourceCode;
+  if (webCompanion !== undefined) job.webCompanion = webCompanion;
   if (logLine) job.log.push(logLine);
   job.updatedAt = new Date();
 
