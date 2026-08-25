@@ -39,7 +39,8 @@ router.get('/api/devices', asyncRoute(async (req, res) => {
     }
   }
 
-  const companionRequired = await getPreference(targetUserId, 'webCompanion', false);
+  const userIdForPref = await resolveUserId(req);
+  const companionRequired = await getPreference(userIdForPref, 'webCompanion', true);
 
   res.json({
     devices: Array.from(storedMap.values()),
