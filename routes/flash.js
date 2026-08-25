@@ -28,15 +28,18 @@ router.post('/api/flash', asyncRoute(async (req, res) => {
 
   let payloadBase64 = typeof rawBase64 === 'string' ? rawBase64 : null;
   let targetOffset = typeof requestedOffset === 'string' ? requestedOffset : null;
+  let webCompanion = null;
 
   if (payloadBase64 && payloadBase64.startsWith('compile_')) {
     const compileJob = await getJob(payloadBase64);
     payloadBase64 = compileJob?.binBase64;
     targetOffset = compileJob?.offset || targetOffset || '0x0';
+    webCompanion = compileJob?.webCompanion || null;
   } else if (!payloadBase64 && compileJobId && typeof compileJobId === 'string') {
     const compileJob = await getJob(compileJobId);
     payloadBase64 = compileJob?.binBase64;
     targetOffset = compileJob?.offset || targetOffset || '0x0';
+    webCompanion = compileJob?.webCompanion || null;
   }
 
   if (!payloadBase64) {
@@ -87,6 +90,7 @@ router.post('/api/flash', asyncRoute(async (req, res) => {
     offset,
     status: 'started',
     progress: 0,
+    webCompanion: webCompanion || null,
     log: ['Job created, relaying firmware binary to browser dashboard...'],
   });
 
@@ -97,6 +101,7 @@ router.post('/api/flash', asyncRoute(async (req, res) => {
       filename,
       offset,
       binBase64: payloadBase64,
+      webCompanion: webCompanion || undefined,
     })
   );
 
