@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { listDevices, getAgentStatus, recordAgentConnection, getDevice } from '../services/storage.js';
+import { listDevices, getAgentStatus, recordAgentConnection, getDevice, getPreference } from '../services/storage.js';
 import { deviceSockets } from '../services/websocket.js';
 import { resolveUserId } from '../services/user-resolver.js';
 import { asyncRoute } from '../middleware/errorHandler.js';
@@ -39,7 +39,14 @@ router.get('/api/devices', asyncRoute(async (req, res) => {
     }
   }
 
-  res.json({ devices: Array.from(storedMap.values()) });
+  const companionRequired = await getPreference(targetUserId, 'webCompanion', false);
+
+  res.json({
+    devices: Array.from(storedMap.values()),
+    preferences: {
+      webCompanion: companionRequired,
+    },
+  });
 }));
 
 router.get('/api/agents/status', asyncRoute(async (req, res) => {
