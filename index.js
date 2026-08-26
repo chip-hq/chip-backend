@@ -1,3 +1,11 @@
+/**
+ * Chip — Backend Server
+ * Copyright (c) 2024–2026 Chip. All Rights Reserved.
+ *
+ * This software is proprietary and confidential. Unauthorized copying,
+ * distribution, or use of this file, via any medium, is strictly prohibited.
+ * See LICENSE for full terms.
+ */
 import express from 'express';
 import cors from 'cors';
 import { rateLimit } from 'express-rate-limit';

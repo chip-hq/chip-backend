@@ -2,6 +2,9 @@
   "name": "chip-backend",
   "version": "1.0.0",
   "description": "Chip backend server for compiling ESP32 firmware and relaying flashing status",
+  "license": "UNLICENSED",
+  "author": "Chip",
+  "private": true,
   "main": "index.js",
   "type": "module",
   "scripts": {
