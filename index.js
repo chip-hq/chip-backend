@@ -1,5 +1,6 @@
 import express from 'express';
 import cors from 'cors';
+import { rateLimit } from 'express-rate-limit';
 import dotenv from 'dotenv';
 import { createServer } from 'http';
 import { initStorage, closeStorage, isDbConnected } from './services/storage.js';
@@ -19,8 +20,46 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-app.use(cors());
+// Lock CORS to the configured frontend origin in production
+const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173';
+const corsOptions = {
+  origin: (origin, callback) => {
+    // Allow requests with no origin (server-to-server, MCP tool calls, curl)
+    if (!origin) return callback(null, true);
+    if (origin === FRONTEND_URL) return callback(null, true);
+    // Also allow localhost variants during local development
+    if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return callback(null, true);
+    callback(new Error(`CORS: origin '${origin}' not allowed`));
+  },
+  credentials: true,
+};
+app.use(cors(corsOptions));
 app.use(express.json({ limit: '10mb' }));
+
+// Rate limiting — prevent abuse of expensive CPU-bound endpoints
+const compileLimiter = rateLimit({
+  windowMs: 60 * 1000,          // 1 minute window
+  max: 10,                       // max 10 compile requests per minute per IP
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many compile requests — please wait before trying again.' },
+});
+
+const flashLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many flash requests — please wait before trying again.' },
+});
+
+const generalApiLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 120,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests — please slow down.' },
+});
 
 app.use(oauthRouter);
 
@@ -51,8 +90,11 @@ app.get('/health', (req, res) => {
 
 app.use(devicesRouter);
 app.use(jobsRouter);
+app.use('/api/compile', compileLimiter);
 app.use(compileRouter);
+app.use('/api/flash', flashLimiter);
 app.use(flashRouter);
+app.use('/api/preferences', generalApiLimiter);
 app.use(preferencesRouter);
 
 app.use(notFoundHandler);
