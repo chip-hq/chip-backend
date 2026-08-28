@@ -32,6 +32,17 @@ async function saveOAuthSession(sessionId, data) {
 }
 
 async function getOAuthSession(sessionId) {
+  if (typeof sessionId === 'string' && sessionId.split('.').length === 3) {
+    try {
+      const decoded = verifyJWT(sessionId);
+      if (decoded && decoded.redirectUri) {
+        return decoded;
+      }
+    } catch (e) {
+      console.warn('[OAuth] JWT session verification notice:', e.message);
+    }
+  }
+
   let s = pendingCodes.get(`session:${sessionId}`);
   if (s && s.expires > Date.now()) return s;
   if (isDbConnected()) {
@@ -73,6 +84,17 @@ async function saveOAuthCode(code, data) {
 }
 
 async function getOAuthCode(code) {
+  if (typeof code === 'string' && code.split('.').length === 3) {
+    try {
+      const decoded = verifyJWT(code);
+      if (decoded && decoded.userId) {
+        return decoded;
+      }
+    } catch (e) {
+      console.warn('[OAuth] JWT code verification notice:', e.message);
+    }
+  }
+
   let c = pendingCodes.get(`code:${code}`);
   if (c && c.expires > Date.now()) return c;
   if (isDbConnected()) {
@@ -213,7 +235,6 @@ router.get('/oauth/authorize', asyncRoute(async (req, res) => {
     return res.status(400).send('Invalid redirect_uri format');
   }
 
-  const sessionId = randomBytes(16).toString('hex');
   const sessionData = {
     clientId: typeof client_id === 'string' ? client_id : null,
     redirectUri: String(redirect_uri),
@@ -222,6 +243,7 @@ router.get('/oauth/authorize', asyncRoute(async (req, res) => {
     codeChallengeMethod: String(code_challenge_method),
     expires: Date.now() + 15 * 60 * 1000,
   };
+  const sessionId = signJWT(sessionData, 900);
   await saveOAuthSession(sessionId, sessionData);
 
   const frontendUrl = (process.env.FRONTEND_URL || 'http://localhost:5173').replace(/\/+$/, '');
@@ -242,7 +264,7 @@ router.post('/oauth/finalize', express.json(), asyncRoute(async (req, res) => {
   }
 
   const session = await getOAuthSession(sessionId);
-  if (!session || session.expires < Date.now()) {
+  if (!session || (session.expires && session.expires < Date.now()) || (session.exp && session.exp < Math.floor(Date.now() / 1000))) {
     return res.status(400).json({ error: 'Session expired or invalid. Please try connecting again.' });
   }
 
@@ -258,7 +280,6 @@ router.post('/oauth/finalize', express.json(), asyncRoute(async (req, res) => {
     return res.status(401).json({ error: 'Invalid authentication token' });
   }
 
-  const code = randomBytes(24).toString('hex');
   const codeData = {
     userId: firebaseUid,
     email,
@@ -268,6 +289,7 @@ router.post('/oauth/finalize', express.json(), asyncRoute(async (req, res) => {
     codeChallengeMethod: session.codeChallengeMethod,
     expires: Date.now() + 5 * 60 * 1000,
   };
+  const code = signJWT(codeData, 300);
   await saveOAuthCode(code, codeData);
   await deleteOAuthSession(sessionId);
 
