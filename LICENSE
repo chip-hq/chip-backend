@@ -1,51 +1,43 @@
 PROPRIETARY SOFTWARE LICENSE
 
-Copyright (c) 2024–2026 Chip. All Rights Reserved.
+Copyright (c) 2024-2026 Chip. All Rights Reserved.
 
-This software and all associated source code, documentation, assets, and compiled
-artifacts (collectively, the "Software") are the exclusive intellectual property
-of Chip and are protected by copyright law and international treaties.
-
-RESTRICTIONS
+This software and associated documentation files (the "Software") are the
+confidential and proprietary property of Chip.
 
 1. No License Granted. No license, express or implied, is granted to any person
    or entity to use, copy, modify, merge, publish, distribute, sublicense, sell,
-   or otherwise exploit the Software or any portion thereof without the prior
-   written permission of Chip.
+   or otherwise exploit the Software, except with prior written permission from
+   Chip.
 
-2. No Reverse Engineering. You may not reverse engineer, decompile, disassemble,
-   or otherwise attempt to derive the source code of any compiled portion of the
-   Software.
+2. Internal Use Only. The Software may only be used by authorized Chip personnel
+   or approved partners for internal development, testing, or deployment.
 
 3. No Redistribution. You may not distribute, sublicense, rent, lease, lend, or
-   transfer the Software or any rights therein to any third party.
+   otherwise transfer the Software to any third party.
 
-4. No Derivative Works. You may not modify, adapt, translate, or create derivative
-   works based upon the Software without explicit written authorization from Chip.
+4. No Reverse Engineering. You may not reverse engineer, decompile, disassemble,
+   or attempt to derive the source code, structure, algorithms, or underlying
+   ideas of the Software except where expressly permitted by applicable law.
 
-5. Internal Use Only. Authorized team members may access and contribute to the
-   Software solely for the internal development purposes of Chip. Such access does
-   not constitute a transfer of any intellectual property rights.
+5. Confidentiality. You must protect the Software from unauthorized access,
+   disclosure, copying, or use.
 
-CONFIDENTIALITY
+6. Ownership. Chip retains all right, title, and interest in and to the Software,
+   including all intellectual property rights.
 
 The Software contains confidential and proprietary information belonging to Chip.
-Authorized recipients must maintain the confidentiality of the Software and may
-not disclose it to any third party without the prior written consent of Chip.
+Unauthorized copying, distribution, modification, or use is strictly prohibited.
 
 DISCLAIMER OF WARRANTIES
 
 THE SOFTWARE IS PROVIDED "AS IS" WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
 INCLUDING BUT NOT LIMITED TO WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR
-PURPOSE, AND NON-INFRINGEMENT. IN NO EVENT SHALL CHIP BE LIABLE FOR ANY CLAIM,
-DAMAGES, OR OTHER LIABILITY ARISING OUT OF OR IN CONNECTION WITH THE SOFTWARE.
+PURPOSE, AND NONINFRINGEMENT. IN NO EVENT SHALL CHIP BE LIABLE FOR ANY CLAIM,
+DAMAGES, OR OTHER LIABILITY ARISING FROM OR IN CONNECTION WITH THE SOFTWARE.
 
 GOVERNING LAW
 
 This license shall be governed by and construed in accordance with applicable law.
 Any disputes arising under or in connection with this license shall be subject to
-the exclusive jurisdiction of the competent courts.
-
----
-
-For licensing inquiries or permissions, contact the Chip project team.
+the exclusive jurisdiction of the courts designated by Chip.
