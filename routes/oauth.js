@@ -1,7 +1,7 @@
 import { createHmac, createHash, randomBytes } from 'crypto';
 import express, { Router } from 'express';
 import { asyncRoute } from '../middleware/errorHandler.js';
-import { recordAgentConnection } from '../services/storage.js';
+import { recordAgentConnection, getDb, isDbConnected } from '../services/storage.js';
 
 const router = Router();
 
@@ -15,6 +15,88 @@ setInterval(() => {
     if (val.expires < now) pendingCodes.delete(key);
   }
 }, 5 * 60 * 1000);
+
+async function saveOAuthSession(sessionId, data) {
+  pendingCodes.set(`session:${sessionId}`, data);
+  if (isDbConnected()) {
+    try {
+      await getDb().collection('oauth_sessions').updateOne(
+        { sessionId },
+        { $set: { sessionId, ...data, createdAt: new Date() } },
+        { upsert: true }
+      );
+    } catch (err) {
+      console.warn('[OAuth] Mongo session save warning:', err.message);
+    }
+  }
+}
+
+async function getOAuthSession(sessionId) {
+  let s = pendingCodes.get(`session:${sessionId}`);
+  if (s && s.expires > Date.now()) return s;
+  if (isDbConnected()) {
+    try {
+      const doc = await getDb().collection('oauth_sessions').findOne({ sessionId });
+      if (doc && doc.expires > Date.now()) {
+        pendingCodes.set(`session:${sessionId}`, doc);
+        return doc;
+      }
+    } catch (err) {
+      console.warn('[OAuth] Mongo session lookup warning:', err.message);
+    }
+  }
+  return null;
+}
+
+async function deleteOAuthSession(sessionId) {
+  pendingCodes.delete(`session:${sessionId}`);
+  if (isDbConnected()) {
+    try {
+      await getDb().collection('oauth_sessions').deleteOne({ sessionId });
+    } catch {}
+  }
+}
+
+async function saveOAuthCode(code, data) {
+  pendingCodes.set(`code:${code}`, data);
+  if (isDbConnected()) {
+    try {
+      await getDb().collection('oauth_codes').updateOne(
+        { code },
+        { $set: { code, ...data, createdAt: new Date() } },
+        { upsert: true }
+      );
+    } catch (err) {
+      console.warn('[OAuth] Mongo code save warning:', err.message);
+    }
+  }
+}
+
+async function getOAuthCode(code) {
+  let c = pendingCodes.get(`code:${code}`);
+  if (c && c.expires > Date.now()) return c;
+  if (isDbConnected()) {
+    try {
+      const doc = await getDb().collection('oauth_codes').findOne({ code });
+      if (doc && doc.expires > Date.now()) {
+        pendingCodes.set(`code:${code}`, doc);
+        return doc;
+      }
+    } catch (err) {
+      console.warn('[OAuth] Mongo code lookup warning:', err.message);
+    }
+  }
+  return null;
+}
+
+async function deleteOAuthCode(code) {
+  pendingCodes.delete(`code:${code}`);
+  if (isDbConnected()) {
+    try {
+      await getDb().collection('oauth_codes').deleteOne({ code });
+    } catch {}
+  }
+}
 
 export function signJWT(payload, expiresInSeconds = 86400 * 30) {
   const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url');
@@ -128,14 +210,15 @@ router.get('/oauth/authorize', asyncRoute(async (req, res) => {
   }
 
   const sessionId = randomBytes(16).toString('hex');
-  pendingCodes.set(`session:${sessionId}`, {
+  const sessionData = {
     clientId: typeof client_id === 'string' ? client_id : null,
     redirectUri: String(redirect_uri),
     state: state ? String(state) : '',
     codeChallenge: code_challenge ? String(code_challenge) : null,
     codeChallengeMethod: String(code_challenge_method),
-    expires: Date.now() + 10 * 60 * 1000,
-  });
+    expires: Date.now() + 15 * 60 * 1000,
+  };
+  await saveOAuthSession(sessionId, sessionData);
 
   const frontendUrl = (process.env.FRONTEND_URL || 'http://localhost:5173').replace(/\/+$/, '');
   const clientAuthUrl = new URL(frontendUrl);
@@ -154,7 +237,7 @@ router.post('/oauth/finalize', express.json(), asyncRoute(async (req, res) => {
     return res.status(400).json({ error: 'Missing idToken or sessionId' });
   }
 
-  const session = pendingCodes.get(`session:${sessionId}`);
+  const session = await getOAuthSession(sessionId);
   if (!session || session.expires < Date.now()) {
     return res.status(400).json({ error: 'Session expired or invalid. Please try connecting again.' });
   }
@@ -172,7 +255,7 @@ router.post('/oauth/finalize', express.json(), asyncRoute(async (req, res) => {
   }
 
   const code = randomBytes(24).toString('hex');
-  pendingCodes.set(`code:${code}`, {
+  const codeData = {
     userId: firebaseUid,
     email,
     clientId: session.clientId,
@@ -180,8 +263,9 @@ router.post('/oauth/finalize', express.json(), asyncRoute(async (req, res) => {
     codeChallenge: session.codeChallenge,
     codeChallengeMethod: session.codeChallengeMethod,
     expires: Date.now() + 5 * 60 * 1000,
-  });
-  pendingCodes.delete(`session:${sessionId}`);
+  };
+  await saveOAuthCode(code, codeData);
+  await deleteOAuthSession(sessionId);
 
   recordAgentConnection({
     userId: firebaseUid,
@@ -208,7 +292,7 @@ router.post('/oauth/token', express.urlencoded({ extended: false }), express.jso
     return res.status(400).json({ error: 'missing_code' });
   }
 
-  const codeData = pendingCodes.get(`code:${code}`);
+  const codeData = await getOAuthCode(code);
   if (!codeData || codeData.expires < Date.now()) {
     return res.status(400).json({ error: 'invalid_grant', error_description: 'Code expired or invalid' });
   }
@@ -226,7 +310,7 @@ router.post('/oauth/token', express.urlencoded({ extended: false }), express.jso
     }
   }
 
-  pendingCodes.delete(`code:${code}`);
+  await deleteOAuthCode(code);
 
   const base = `${req.protocol}://${req.get('host')}`;
   const accessToken = signJWT({

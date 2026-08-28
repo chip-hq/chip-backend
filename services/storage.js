@@ -67,6 +67,10 @@ export async function initStorage() {
       db.collection('devices').createIndex({ userId: 1, deviceId: 1 }),
       db.collection('agents').createIndex({ userId: 1 }, { unique: true }),
       db.collection('preferences').createIndex({ userId: 1 }, { unique: true }),
+      db.collection('oauth_sessions').createIndex({ sessionId: 1 }, { unique: true }),
+      db.collection('oauth_sessions').createIndex({ createdAt: 1 }, { expireAfterSeconds: 1800 }),
+      db.collection('oauth_codes').createIndex({ code: 1 }, { unique: true }),
+      db.collection('oauth_codes').createIndex({ createdAt: 1 }, { expireAfterSeconds: 600 }),
     ]);
 
     mongoReady = true;
@@ -77,6 +81,10 @@ export async function initStorage() {
     warn('initStorage', err);
     return { connected: false };
   }
+}
+
+export function getDb() {
+  return db;
 }
 
 export function isDbConnected() {
