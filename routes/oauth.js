@@ -49,6 +49,7 @@ router.get('/.well-known/oauth-authorization-server', (req, res) => {
     authorization_endpoint: `${base}/oauth/authorize`,
     token_endpoint: `${base}/oauth/token`,
     registration_endpoint: `${base}/oauth/register`,
+    userinfo_endpoint: `${base}/oauth/userinfo`,
     response_types_supported: ['code'],
     grant_types_supported: ['authorization_code'],
     code_challenge_methods_supported: ['S256', 'plain'],
@@ -66,6 +67,7 @@ router.get('/.well-known/openid-configuration', (req, res) => {
     authorization_endpoint: `${base}/oauth/authorize`,
     token_endpoint: `${base}/oauth/token`,
     registration_endpoint: `${base}/oauth/register`,
+    userinfo_endpoint: `${base}/oauth/userinfo`,
     response_types_supported: ['code'],
     grant_types_supported: ['authorization_code'],
     code_challenge_methods_supported: ['S256', 'plain'],
@@ -173,6 +175,7 @@ router.post('/oauth/finalize', express.json(), asyncRoute(async (req, res) => {
   pendingCodes.set(`code:${code}`, {
     userId: firebaseUid,
     email,
+    clientId: session.clientId,
     redirectUri: session.redirectUri,
     codeChallenge: session.codeChallenge,
     codeChallengeMethod: session.codeChallengeMethod,
@@ -225,26 +228,61 @@ router.post('/oauth/token', express.urlencoded({ extended: false }), express.jso
 
   pendingCodes.delete(`code:${code}`);
 
+  const base = `${req.protocol}://${req.get('host')}`;
   const accessToken = signJWT({
+    iss: base,
     sub: codeData.userId,
     email: codeData.email,
     scope: 'chip:mcp',
   }, 30 * 24 * 3600);
 
+  const idToken = signJWT({
+    iss: base,
+    sub: codeData.userId,
+    aud: codeData.clientId || 'ChatGPT',
+    email: codeData.email,
+    name: codeData.email,
+  }, 30 * 24 * 3600);
+
   recordAgentConnection({
     userId: codeData.userId,
-    clientName: 'Claude / MCP Agent',
+    clientName: 'ChatGPT / Claude / MCP Agent',
     email: codeData.email,
   });
 
-  console.log(`[OAuth] Access token issued for ${codeData.email}`);
+  console.log(`[OAuth] Access token & ID token issued for ${codeData.email}`);
 
   res.json({
     access_token: accessToken,
     token_type: 'Bearer',
     expires_in: 30 * 24 * 3600,
-    scope: 'chip:mcp',
+    scope: 'openid chip:mcp',
+    id_token: idToken,
   });
 }));
+
+// ── OpenID Connect UserInfo endpoint ─────────────────────────────────────────
+const handleUserInfo = (req, res) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'unauthorized' });
+  }
+  const token = authHeader.split('Bearer ')[1]?.trim();
+  try {
+    const payload = verifyJWT(token);
+    res.json({
+      sub: payload.sub,
+      email: payload.email,
+      name: payload.email,
+    });
+  } catch {
+    res.status(401).json({ error: 'invalid_token' });
+  }
+};
+
+router.get('/oauth/userinfo', handleUserInfo);
+router.get('/userinfo', handleUserInfo);
+router.post('/oauth/userinfo', handleUserInfo);
+router.post('/userinfo', handleUserInfo);
 
 export default router;
