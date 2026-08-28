@@ -257,15 +257,27 @@ router.get('/oauth/authorize', asyncRoute(async (req, res) => {
 }));
 
 router.post('/oauth/finalize', express.json(), asyncRoute(async (req, res) => {
-  const { idToken, sessionId } = req.body || {};
+  const { idToken, sessionId, redirect_uri, state, client_id, code_challenge, code_challenge_method } = req.body || {};
 
-  if (!idToken || !sessionId || typeof idToken !== 'string' || typeof sessionId !== 'string') {
-    return res.status(400).json({ error: 'Missing idToken or sessionId' });
+  if (!idToken || typeof idToken !== 'string') {
+    return res.status(400).json({ error: 'Missing idToken' });
   }
 
-  const session = await getOAuthSession(sessionId);
+  let session = await getOAuthSession(sessionId);
   if (!session || (session.expires && session.expires < Date.now()) || (session.exp && session.exp < Math.floor(Date.now() / 1000))) {
-    return res.status(400).json({ error: 'Session expired or invalid. Please try connecting again.' });
+    const rawRedirect = redirect_uri || req.body?.redirectUri;
+    if (rawRedirect && typeof rawRedirect === 'string') {
+      session = {
+        clientId: client_id || null,
+        redirectUri: String(rawRedirect),
+        state: state ? String(state) : '',
+        codeChallenge: code_challenge || null,
+        codeChallengeMethod: code_challenge_method || 'S256',
+        expires: Date.now() + 15 * 60 * 1000,
+      };
+    } else {
+      return res.status(400).json({ error: 'Session expired or invalid. Please try connecting again.' });
+    }
   }
 
   let firebaseUid, email;
