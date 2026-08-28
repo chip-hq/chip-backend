@@ -5,7 +5,14 @@ import { recordAgentConnection, getDb, isDbConnected } from '../services/storage
 
 const router = Router();
 
-const SESSION_SECRET = process.env.SESSION_SECRET || 'chip-dev-secret-change-in-production';
+const SESSION_SECRET = process.env.SESSION_SECRET || 'd84f391b8a1c97efb99e74281350a41f6c770514930364d2719a6ee01e9d892a';
+const CANDIDATE_SECRETS = Array.from(new Set([
+  process.env.SESSION_SECRET,
+  'd84f391b8a1c97efb99e74281350a41f6c770514930364d2719a6ee01e9d892a',
+  'chip-dev-secret-change-in-production',
+  'chip-shared-oauth-secret-2026-production',
+].filter(Boolean)));
+
 const registeredClients = new Map();
 const pendingCodes = new Map();
 
@@ -119,14 +126,6 @@ async function deleteOAuthCode(code) {
     } catch {}
   }
 }
-
-const SESSION_SECRET = process.env.SESSION_SECRET || 'd84f391b8a1c97efb99e74281350a41f6c770514930364d2719a6ee01e9d892a';
-const CANDIDATE_SECRETS = Array.from(new Set([
-  process.env.SESSION_SECRET,
-  'd84f391b8a1c97efb99e74281350a41f6c770514930364d2719a6ee01e9d892a',
-  'chip-dev-secret-change-in-production',
-  'chip-shared-oauth-secret-2026-production',
-].filter(Boolean)));
 
 export function signJWT(payload, expiresInSeconds = 86400 * 30) {
   const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url');
