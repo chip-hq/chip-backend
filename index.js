@@ -30,6 +30,11 @@ const PORT = process.env.PORT || 3000;
 
 // Lock CORS to the configured frontend origin in production
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173';
+
+// OAuth discovery & token endpoints must be open to all origins
+// so ChatGPT, Claude, and other agents can reach them
+const openCorsMiddleware = cors({ origin: '*', credentials: false });
+
 const corsOptions = {
   origin: (origin, callback) => {
     // Allow requests with no origin (server-to-server, MCP tool calls, curl)
@@ -69,6 +74,9 @@ const generalApiLimiter = rateLimit({
   message: { error: 'Too many requests — please slow down.' },
 });
 
+// Apply open CORS to OAuth & discovery endpoints specifically
+app.use('/.well-known', openCorsMiddleware);
+app.use('/oauth', openCorsMiddleware);
 app.use(oauthRouter);
 
 app.use((req, res, next) => {

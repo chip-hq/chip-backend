@@ -54,6 +54,24 @@ router.get('/.well-known/oauth-authorization-server', (req, res) => {
     code_challenge_methods_supported: ['S256', 'plain'],
     token_endpoint_auth_methods_supported: ['none', 'client_secret_post', 'client_secret_basic'],
     scopes_supported: ['openid'],
+    subject_types_supported: ['public'],
+  });
+});
+
+// Also serve openid-configuration — required by ChatGPT connector discovery
+router.get('/.well-known/openid-configuration', (req, res) => {
+  const base = `${req.protocol}://${req.get('host')}`;
+  res.json({
+    issuer: base,
+    authorization_endpoint: `${base}/oauth/authorize`,
+    token_endpoint: `${base}/oauth/token`,
+    registration_endpoint: `${base}/oauth/register`,
+    response_types_supported: ['code'],
+    grant_types_supported: ['authorization_code'],
+    code_challenge_methods_supported: ['S256', 'plain'],
+    token_endpoint_auth_methods_supported: ['none', 'client_secret_post', 'client_secret_basic'],
+    scopes_supported: ['openid'],
+    subject_types_supported: ['public'],
   });
 });
 
