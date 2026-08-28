@@ -137,7 +137,7 @@ router.get('/oauth/authorize', asyncRoute(async (req, res) => {
     expires: Date.now() + 10 * 60 * 1000,
   });
 
-  const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+  const frontendUrl = (process.env.FRONTEND_URL || 'http://localhost:5173').replace(/\/+$/, '');
   const clientAuthUrl = new URL(frontendUrl);
   clientAuthUrl.searchParams.set('sessionId', sessionId);
   clientAuthUrl.searchParams.set('redirect_uri', String(redirect_uri));

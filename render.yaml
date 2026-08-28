@@ -17,3 +17,5 @@ services:
         sync: false
       - key: MONGODB_PASSWORD
         sync: false
+      - key: FRONTEND_URL
+        value: https://chip-mocha.vercel.app

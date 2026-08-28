@@ -29,7 +29,11 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // Lock CORS to the configured frontend origin in production
-const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173';
+const FRONTEND_URL = (process.env.FRONTEND_URL || 'http://localhost:5173').replace(/\/+$/, '');
+const ALLOWED_ORIGINS = new Set([
+  FRONTEND_URL,
+  'https://chip-mocha.vercel.app',
+]);
 
 // OAuth discovery & token endpoints must be open to all origins
 // so ChatGPT, Claude, and other agents can reach them
@@ -39,7 +43,8 @@ const corsOptions = {
   origin: (origin, callback) => {
     // Allow requests with no origin (server-to-server, MCP tool calls, curl)
     if (!origin) return callback(null, true);
-    if (origin === FRONTEND_URL) return callback(null, true);
+    const cleanOrigin = origin.replace(/\/+$/, '');
+    if (ALLOWED_ORIGINS.has(cleanOrigin) || cleanOrigin.endsWith('.vercel.app')) return callback(null, true);
     // Also allow localhost variants during local development
     if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return callback(null, true);
     callback(new Error(`CORS: origin '${origin}' not allowed`));
