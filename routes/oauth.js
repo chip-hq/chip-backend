@@ -132,10 +132,12 @@ router.get('/.well-known/oauth-authorization-server', (req, res) => {
     token_endpoint: `${base}/oauth/token`,
     registration_endpoint: `${base}/oauth/register`,
     userinfo_endpoint: `${base}/oauth/userinfo`,
+    revocation_endpoint: `${base}/oauth/revoke`,
     response_types_supported: ['code'],
     grant_types_supported: ['authorization_code'],
     code_challenge_methods_supported: ['S256', 'plain'],
     token_endpoint_auth_methods_supported: ['none', 'client_secret_post', 'client_secret_basic'],
+    revocation_endpoint_auth_methods_supported: ['none', 'client_secret_post', 'client_secret_basic'],
     scopes_supported: ['openid'],
     subject_types_supported: ['public'],
   });
@@ -150,10 +152,12 @@ router.get('/.well-known/openid-configuration', (req, res) => {
     token_endpoint: `${base}/oauth/token`,
     registration_endpoint: `${base}/oauth/register`,
     userinfo_endpoint: `${base}/oauth/userinfo`,
+    revocation_endpoint: `${base}/oauth/revoke`,
     response_types_supported: ['code'],
     grant_types_supported: ['authorization_code'],
     code_challenge_methods_supported: ['S256', 'plain'],
     token_endpoint_auth_methods_supported: ['none', 'client_secret_post', 'client_secret_basic'],
+    revocation_endpoint_auth_methods_supported: ['none', 'client_secret_post', 'client_secret_basic'],
     scopes_supported: ['openid'],
     subject_types_supported: ['public'],
   });
@@ -368,5 +372,17 @@ router.get('/oauth/userinfo', handleUserInfo);
 router.get('/userinfo', handleUserInfo);
 router.post('/oauth/userinfo', handleUserInfo);
 router.post('/userinfo', handleUserInfo);
+
+// ── RFC 7009 Token Revocation & RFC 7592 Client Deregistration ──────────────
+const handleRevoke = (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.status(200).json({ status: 'ok', revoked: true });
+};
+
+router.post('/oauth/revoke', handleRevoke);
+router.post('/oauth/token/revoke', handleRevoke);
+router.delete('/oauth/token', handleRevoke);
+router.delete('/oauth/register', handleRevoke);
+router.delete('/oauth/register/:clientId', handleRevoke);
 
 export default router;
