@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { listDevices, getAgentStatus, recordAgentConnection, getDevice, getPreference } from '../services/storage.js';
+import { listDevices, getAgentStatus, recordAgentConnection, disconnectAgent, getDevice, getPreference } from '../services/storage.js';
 import { deviceSockets } from '../services/websocket.js';
 import { resolveUserId } from '../services/user-resolver.js';
 import { asyncRoute } from '../middleware/errorHandler.js';
@@ -54,6 +54,12 @@ router.get('/api/agents/status', asyncRoute(async (req, res) => {
   const targetUserId = await resolveUserId(req);
   const status = await getAgentStatus(targetUserId);
   res.json(status);
+}));
+
+router.post('/api/agents/disconnect', asyncRoute(async (req, res) => {
+  const targetUserId = await resolveUserId(req);
+  disconnectAgent(targetUserId);
+  res.json({ ok: true, connected: false });
 }));
 
 export default router;

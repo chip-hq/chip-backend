@@ -1,7 +1,7 @@
 import { createHmac, createHash, randomBytes } from 'crypto';
 import express, { Router } from 'express';
 import { asyncRoute } from '../middleware/errorHandler.js';
-import { recordAgentConnection, getDb, isDbConnected } from '../services/storage.js';
+import { recordAgentConnection, disconnectAgent, getDb, isDbConnected } from '../services/storage.js';
 
 const router = Router();
 
@@ -435,6 +435,18 @@ router.post('/userinfo', handleUserInfo);
 // ── RFC 7009 Token Revocation & RFC 7592 Client Deregistration ──────────────
 const handleRevoke = (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
+  const token = req.body?.token || req.query?.token || req.headers.authorization?.replace(/^Bearer\s+/i, '');
+  const clientId = req.params?.clientId || req.body?.client_id || req.query?.client_id;
+
+  let targetUser = null;
+  if (token) {
+    try {
+      const decoded = verifyJWT(token);
+      targetUser = decoded?.userId || decoded?.sub || decoded?.uid || null;
+    } catch {}
+  }
+
+  disconnectAgent(targetUser || clientId || null);
   res.status(200).json({ status: 'ok', revoked: true });
 };
 

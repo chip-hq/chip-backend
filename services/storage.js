@@ -308,15 +308,33 @@ export function recordAgentConnection({ userId, clientName = 'Claude', email = n
   return doc;
 }
 
+export function disconnectAgent(userId) {
+  const now = new Date();
+  if (userId) {
+    const uid = String(userId);
+    memAgents.delete(uid);
+    if (canUseMongo()) {
+      db.collection('agents')
+        .updateMany(
+          { $or: [{ userId: uid }, { email: uid }] },
+          { $set: { connected: false, disconnectedAt: now } }
+        )
+        .catch((err) => warn('disconnectAgent', err));
+    }
+  } else {
+    memAgents.clear();
+    if (canUseMongo()) {
+      db.collection('agents')
+        .updateMany({}, { $set: { connected: false, disconnectedAt: now } })
+        .catch((err) => warn('disconnectAgent', err));
+    }
+  }
+}
+
 export async function getAgentStatus(userId) {
   if (userId) {
     const mem = memAgents.get(String(userId));
     if (mem) return mem;
-  }
-
-  if (memAgents.size > 0) {
-    const first = memAgents.values().next().value;
-    if (first) return first;
   }
 
   if (canUseMongo()) {
@@ -327,12 +345,11 @@ export async function getAgentStatus(userId) {
         if (userId) memAgents.set(String(userId), doc);
         return doc;
       }
-      const anyAgent = await db.collection('agents').findOne({}, SAFE);
-      if (anyAgent) return anyAgent;
     } catch (err) {
       warn('getAgentStatus', err);
     }
   }
+
   return { connected: false };
 }
 
