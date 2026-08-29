@@ -224,10 +224,6 @@ router.post('/oauth/register', express.json(), asyncRoute(async (req, res) => {
   };
 
   registeredClients.set(clientId, clientRecord);
-  recordAgentConnection({
-    userId: 'active_mcp_client',
-    clientName: clientRecord.client_name,
-  });
   console.log(`[OAuth] Dynamic client registered: ${clientRecord.client_name} (${clientId})`);
 
   res.status(201).json({
