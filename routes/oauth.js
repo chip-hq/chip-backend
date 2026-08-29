@@ -326,9 +326,18 @@ router.post('/oauth/finalize', express.json(), asyncRoute(async (req, res) => {
   await saveOAuthCode(code, codeData);
   await deleteOAuthSession(sessionId);
 
+  // Derive agent name from redirect URI so Claude and ChatGPT get separate slots
+  const agentHint = (() => {
+    const uri = (session.redirectUri || '').toLowerCase();
+    if (uri.includes('claude') || uri.includes('anthropic')) return { name: 'Claude', key: 'claude' };
+    if (uri.includes('chatgpt') || uri.includes('openai')) return { name: 'ChatGPT', key: 'chatgpt' };
+    return { name: 'MCP Agent', key: session.clientId?.slice(0, 12) || 'mcpagent' };
+  })();
+
   recordAgentConnection({
     userId: firebaseUid,
-    clientName: 'Claude / MCP Agent',
+    clientName: agentHint.name,
+    clientKey: agentHint.key,
     email,
   });
 
@@ -387,13 +396,23 @@ router.post('/oauth/token', express.urlencoded({ extended: false }), express.jso
     name: codeData.email,
   }, 30 * 24 * 3600);
 
+  // Derive agent name from the audience / clientId so Claude and ChatGPT get separate slots
+  const agentHint = (() => {
+    const clientId = (codeData.clientId || '').toLowerCase();
+    const redirectUri = (codeData.redirectUri || '').toLowerCase();
+    if (clientId.includes('claude') || redirectUri.includes('claude') || redirectUri.includes('anthropic')) return { name: 'Claude', key: 'claude' };
+    if (clientId.includes('chatgpt') || redirectUri.includes('chatgpt') || redirectUri.includes('openai')) return { name: 'ChatGPT', key: 'chatgpt' };
+    return { name: 'MCP Agent', key: clientId.slice(0, 12) || 'mcpagent' };
+  })();
+
   recordAgentConnection({
     userId: codeData.userId,
-    clientName: 'ChatGPT / Claude / MCP Agent',
+    clientName: agentHint.name,
+    clientKey: agentHint.key,
     email: codeData.email,
   });
 
-  console.log(`[OAuth] Access token & ID token issued for ${codeData.email}`);
+  console.log(`[OAuth] Access token issued for ${codeData.email} via ${agentHint.name}`);
 
   res.json({
     access_token: accessToken,
@@ -435,14 +454,27 @@ const handleRevoke = (req, res) => {
   const clientId = req.params?.clientId || req.body?.client_id || req.query?.client_id;
 
   let targetUser = null;
+  let clientKey = null;
+
   if (token) {
     try {
       const decoded = verifyJWT(token);
       targetUser = decoded?.userId || decoded?.sub || decoded?.uid || null;
+      // Derive which agent this token was issued to from the client_id hint
+      const cid = (clientId || decoded?.aud || '').toLowerCase();
+      if (cid.includes('claude') || cid.includes('anthropic')) clientKey = 'claude';
+      else if (cid.includes('chatgpt') || cid.includes('openai')) clientKey = 'chatgpt';
     } catch {}
   }
 
-  disconnectAgent(targetUser || clientId || null);
+  // Also try to detect agent from clientId alone (no token)
+  if (!clientKey && clientId) {
+    const cid = String(clientId).toLowerCase();
+    if (cid.includes('claude') || cid.includes('anthropic')) clientKey = 'claude';
+    else if (cid.includes('chatgpt') || cid.includes('openai')) clientKey = 'chatgpt';
+  }
+
+  disconnectAgent(targetUser || null, clientKey || null);
   res.status(200).json({ status: 'ok', revoked: true });
 };
 

@@ -10,9 +10,20 @@ router.get('/api/devices', asyncRoute(async (req, res) => {
   const targetUserId = req.userId || (typeof req.query.userId === 'string' ? req.query.userId : null);
 
   if (req.userId) {
+    // Detect agent type from token audience or User-Agent header
+    const ua = (req.headers['user-agent'] || '').toLowerCase();
+    const aud = (req.tokenPayload?.aud || req.tokenPayload?.client_id || '').toLowerCase();
+    let clientName = 'MCP Agent';
+    let clientKey = 'mcpagent';
+    if (aud.includes('claude') || ua.includes('claude') || ua.includes('anthropic')) {
+      clientName = 'Claude'; clientKey = 'claude';
+    } else if (aud.includes('chatgpt') || ua.includes('chatgpt') || ua.includes('openai')) {
+      clientName = 'ChatGPT'; clientKey = 'chatgpt';
+    }
     recordAgentConnection({
       userId: req.userId,
-      clientName: 'Claude / MCP Agent',
+      clientName,
+      clientKey,
       email: req.userEmail || null,
     });
   }

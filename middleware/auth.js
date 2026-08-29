@@ -60,6 +60,7 @@ export function extractUser(req, res, next) {
           if (uid) {
             req.userId = String(uid);
             req.userEmail = chipPayload.email || null;
+            req.tokenPayload = chipPayload; // expose for downstream agent detection
             return next();
           }
         }

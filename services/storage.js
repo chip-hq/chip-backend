@@ -283,23 +283,33 @@ export async function clearJobs(userId = null) {
 }
 
 // ── Agents / MCP Connections ────────────────────────────────────────────────
+// Keyed as `${userId}:${clientKey}` where clientKey is a stable identifier for the agent client
 
-export function recordAgentConnection({ userId, clientName = 'Claude', email = null }) {
+function agentMemKey(userId, clientKey) {
+  return `${String(userId)}::${String(clientKey || 'default')}`;
+}
+
+export function recordAgentConnection({ userId, clientName = 'MCP Agent', email = null, clientKey = null }) {
   if (!userId) return;
   const now = new Date();
+  const uid = String(userId);
+  // Use first 12 chars of clientName as a stable key if no clientKey provided
+  const key = clientKey || clientName.replace(/[^a-z0-9]/gi, '').toLowerCase().slice(0, 12) || 'default';
+  const memKey = agentMemKey(uid, key);
   const doc = {
-    userId: String(userId),
+    userId: uid,
     clientName,
+    clientKey: key,
     email,
     connected: true,
     lastActive: now,
   };
-  memAgents.set(String(userId), doc);
+  memAgents.set(memKey, doc);
 
   if (canUseMongo()) {
     db.collection('agents')
       .updateOne(
-        { userId: String(userId) },
+        { userId: uid, clientKey: key },
         { $set: doc, $setOnInsert: { firstConnected: now } },
         { upsert: true }
       )
@@ -308,20 +318,39 @@ export function recordAgentConnection({ userId, clientName = 'Claude', email = n
   return doc;
 }
 
-export function disconnectAgent(userId) {
+export function disconnectAgent(userId, clientKey = null) {
   const now = new Date();
   if (userId) {
     const uid = String(userId);
-    memAgents.delete(uid);
-    if (canUseMongo()) {
-      db.collection('agents')
-        .updateMany(
-          { $or: [{ userId: uid }, { email: uid }] },
-          { $set: { connected: false, disconnectedAt: now } }
-        )
-        .catch((err) => warn('disconnectAgent', err));
+    if (clientKey) {
+      // Disconnect only a specific client
+      const key = String(clientKey);
+      const memKey = agentMemKey(uid, key);
+      memAgents.delete(memKey);
+      if (canUseMongo()) {
+        db.collection('agents')
+          .updateMany(
+            { userId: uid, clientKey: key },
+            { $set: { connected: false, disconnectedAt: now } }
+          )
+          .catch((err) => warn('disconnectAgent', err));
+      }
+    } else {
+      // Disconnect all clients for this user
+      for (const k of memAgents.keys()) {
+        if (k.startsWith(`${uid}::`)) memAgents.delete(k);
+      }
+      if (canUseMongo()) {
+        db.collection('agents')
+          .updateMany(
+            { userId: uid },
+            { $set: { connected: false, disconnectedAt: now } }
+          )
+          .catch((err) => warn('disconnectAgent', err));
+      }
     }
   } else {
+    // Global disconnect all
     memAgents.clear();
     if (canUseMongo()) {
       db.collection('agents')
@@ -332,18 +361,48 @@ export function disconnectAgent(userId) {
 }
 
 export async function getAgentStatus(userId) {
-  if (userId) {
-    const mem = memAgents.get(String(userId));
-    if (mem) return mem;
+  const uid = userId ? String(userId) : null;
+
+  // Collect all in-memory sessions for this user
+  const memSessions = [];
+  if (uid) {
+    for (const [k, v] of memAgents.entries()) {
+      if (k.startsWith(`${uid}::`)) memSessions.push(v);
+    }
   }
 
-  if (canUseMongo()) {
+  // If we have any connected session in memory, return aggregate
+  if (memSessions.length > 0) {
+    const connected = memSessions.some((s) => s.connected);
+    const clients = memSessions.filter((s) => s.connected).map((s) => s.clientName);
+    return {
+      connected,
+      clientName: clients.join(' + ') || memSessions[0].clientName,
+      clients,
+      userId: uid,
+    };
+  }
+
+  // Fall back to MongoDB
+  if (canUseMongo() && uid) {
     try {
-      const query = userId ? { $or: [{ userId: String(userId) }, { email: String(userId) }] } : {};
-      const doc = await db.collection('agents').findOne(query, SAFE);
-      if (doc) {
-        if (userId) memAgents.set(String(userId), doc);
-        return doc;
+      const docs = await db.collection('agents').find(
+        { userId: uid },
+        { ...SAFE, limit: 10 }
+      ).toArray();
+      if (docs.length > 0) {
+        // Cache in memory
+        for (const doc of docs) {
+          memAgents.set(agentMemKey(uid, doc.clientKey || 'default'), doc);
+        }
+        const connected = docs.some((d) => d.connected);
+        const clients = docs.filter((d) => d.connected).map((d) => d.clientName);
+        return {
+          connected,
+          clientName: clients.join(' + ') || docs[0].clientName,
+          clients,
+          userId: uid,
+        };
       }
     } catch (err) {
       warn('getAgentStatus', err);
