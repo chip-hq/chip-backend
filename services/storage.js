@@ -360,6 +360,17 @@ export function disconnectAgent(userId, clientKey = null) {
   }
 }
 
+// A session is considered active if a tool was called within the last 5 minutes.
+// Claude and ChatGPT do NOT reliably send revocation requests on disconnect,
+// so activity-based expiry is the only practical way to detect silent disconnects.
+const AGENT_TTL_MS = 5 * 60 * 1000;
+
+function isSessionActive(session) {
+  if (!session || !session.connected) return false;
+  if (!session.lastActive) return false;
+  return Date.now() - new Date(session.lastActive).getTime() < AGENT_TTL_MS;
+}
+
 export async function getAgentStatus(userId) {
   const uid = userId ? String(userId) : null;
 
@@ -371,10 +382,11 @@ export async function getAgentStatus(userId) {
     }
   }
 
-  // If we have any connected session in memory, return aggregate
+  // If we have sessions in memory, evaluate activity
   if (memSessions.length > 0) {
-    const connected = memSessions.some((s) => s.connected);
-    const clients = memSessions.filter((s) => s.connected).map((s) => s.clientName);
+    const activeSessions = memSessions.filter(isSessionActive);
+    const connected = activeSessions.length > 0;
+    const clients = activeSessions.map((s) => s.clientName);
     return {
       connected,
       clientName: clients.join(' + ') || memSessions[0].clientName,
@@ -395,8 +407,9 @@ export async function getAgentStatus(userId) {
         for (const doc of docs) {
           memAgents.set(agentMemKey(uid, doc.clientKey || 'default'), doc);
         }
-        const connected = docs.some((d) => d.connected);
-        const clients = docs.filter((d) => d.connected).map((d) => d.clientName);
+        const activeDocs = docs.filter(isSessionActive);
+        const connected = activeDocs.length > 0;
+        const clients = activeDocs.map((d) => d.clientName);
         return {
           connected,
           clientName: clients.join(' + ') || docs[0].clientName,
