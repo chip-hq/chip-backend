@@ -20,3 +20,12 @@ logs/
 
 # Tiers (WIP)
 tiers/
+
+# SKiDL auto-generated artifacts
+skidl_REPL.*
+*.erc
+*.log
+*_sklib.py
+
+# Generated project circuit data
+data/

@@ -6,10 +6,10 @@
  * distribution, or use of this file, via any medium, is strictly prohibited.
  * See LICENSE for full terms.
  */
+import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import { rateLimit } from 'express-rate-limit';
-import dotenv from 'dotenv';
 import { createServer } from 'http';
 import { initStorage, closeStorage, isDbConnected } from './services/storage.js';
 import { extractUser } from './middleware/auth.js';
@@ -22,8 +22,7 @@ import jobsRouter from './routes/jobs.js';
 import compileRouter from './routes/compile.js';
 import flashRouter from './routes/flash.js';
 import preferencesRouter from './routes/preferences.js';
-
-dotenv.config();
+import circuitRouter from './routes/circuit.js';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -118,6 +117,7 @@ app.use('/api/flash', flashLimiter);
 app.use(flashRouter);
 app.use('/api/preferences', generalApiLimiter);
 app.use(preferencesRouter);
+app.use(circuitRouter);
 
 app.use(notFoundHandler);
 app.use(errorHandler);
@@ -139,3 +139,14 @@ async function shutdown(signal) {
 }
 process.on('SIGINT', () => shutdown('SIGINT'));
 process.on('SIGTERM', () => shutdown('SIGTERM'));
+
+// Catch unhandled errors so crashes are visible instead of silent
+process.on('uncaughtException', (err) => {
+  console.error('[FATAL] Uncaught exception:', err);
+  process.exit(1);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('[FATAL] Unhandled promise rejection:', reason);
+  process.exit(1);
+});
+
