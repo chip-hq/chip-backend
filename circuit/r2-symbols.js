@@ -30,12 +30,23 @@ const CORE_PARTS = [
   { dir: 'RF_Module.kicad_symdir', part: 'ESP32-WROOM-32E.kicad_sym' },
   { dir: 'MCU_Module.kicad_symdir', part: 'Arduino_Nano_v3.x.kicad_sym' },
   { dir: 'MCU_RaspberryPi.kicad_symdir', part: 'RP2040.kicad_sym' },
+  { dir: 'Connector_Generic.kicad_symdir', part: 'Conn_01x02.kicad_sym' },
+  { dir: 'Connector_Generic.kicad_symdir', part: 'Conn_01x03.kicad_sym' },
   { dir: 'Connector_Generic.kicad_symdir', part: 'Conn_01x04.kicad_sym' },
+  { dir: 'Connector_Generic.kicad_symdir', part: 'Conn_01x05.kicad_sym' },
   { dir: 'Connector_Generic.kicad_symdir', part: 'Conn_01x06.kicad_sym' },
+  { dir: 'Connector_Generic.kicad_symdir', part: 'Conn_01x08.kicad_sym' },
+  { dir: 'Connector_Generic.kicad_symdir', part: 'Conn_01x10.kicad_sym' },
+  { dir: 'Display_Graphic.kicad_symdir', part: 'SSD1306-0.96-OLED-I2C.kicad_sym' },
+  { dir: 'Display_Graphic.kicad_symdir', part: 'SSD1306.kicad_sym' },
+  { dir: 'Display_Graphic.kicad_symdir', part: 'OLED-128O064D.kicad_sym' },
+  { dir: 'Display_Graphic.kicad_symdir', part: 'SH1106.kicad_sym' },
   { dir: 'Switch.kicad_symdir', part: 'SW_Push.kicad_sym' },
   { dir: 'Regulator_Linear.kicad_symdir', part: 'AMS1117-3.3.kicad_sym' },
   { dir: 'Sensor.kicad_symdir', part: 'DHT11.kicad_sym' },
   { dir: 'Sensor_Optical.kicad_symdir', part: 'LDR07.kicad_sym' },
+  { dir: 'Sensor_Optical.kicad_symdir', part: 'TCRT5000.kicad_sym' },
+  { dir: 'Sensor_Proximity.kicad_symdir', part: 'GP2Y0A21YK.kicad_sym' },
 ];
 
 /**
