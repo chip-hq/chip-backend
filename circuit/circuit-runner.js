@@ -68,9 +68,10 @@ function getSymbolDir() {
  */
 export async function checkCircuitEnvironment() {
   const { cmd, args: pyArgs } = resolvePython();
+  const symbolDir = await getOrFetchSymbolDir();
   const env = {
     ...process.env,
-    KICAD_SYMBOL_DIR: getSymbolDir(),
+    KICAD_SYMBOL_DIR: symbolDir,
   };
 
   return new Promise((resolveResult) => {
@@ -113,9 +114,12 @@ export async function checkCircuitEnvironment() {
  */
 export async function testPartLoad(lib = 'R', part = 'R') {
   const { cmd, args: pyArgs } = resolvePython();
+  const symdir = lib.endsWith('.kicad_symdir') ? lib : `${lib}.kicad_symdir`;
+  const symfile = part.endsWith('.kicad_sym') ? part : `${part}.kicad_sym`;
+  const symbolDir = await getOrFetchSymbolDir([{ dir: symdir, part: symfile }]);
   const env = {
     ...process.env,
-    KICAD_SYMBOL_DIR: getSymbolDir(),
+    KICAD_SYMBOL_DIR: symbolDir,
   };
 
   return new Promise((resolveResult) => {
@@ -178,9 +182,10 @@ export async function testPartLoad(lib = 'R', part = 'R') {
  */
 export async function searchKiCadSymbols(query = '') {
   const { cmd, args: pyArgs } = resolvePython();
+  const symbolDir = await getOrFetchSymbolDir();
   const env = {
     ...process.env,
-    KICAD_SYMBOL_DIR: getSymbolDir(),
+    KICAD_SYMBOL_DIR: symbolDir,
   };
 
   return new Promise((resolveResult) => {
@@ -222,9 +227,12 @@ export async function searchKiCadSymbols(query = '') {
  */
 export async function getComponentDetails(lib = 'R', part = 'R') {
   const { cmd, args: pyArgs } = resolvePython();
+  const symdir = lib.endsWith('.kicad_symdir') ? lib : `${lib}.kicad_symdir`;
+  const symfile = part.endsWith('.kicad_sym') ? part : `${part}.kicad_sym`;
+  const symbolDir = await getOrFetchSymbolDir([{ dir: symdir, part: symfile }]);
   const env = {
     ...process.env,
-    KICAD_SYMBOL_DIR: getSymbolDir(),
+    KICAD_SYMBOL_DIR: symbolDir,
   };
 
   return new Promise((resolveResult) => {
@@ -264,9 +272,10 @@ export async function getComponentDetails(lib = 'R', part = 'R') {
  */
 export async function buildLedCircuit() {
   const { cmd, args: pyArgs } = resolvePython();
+  const symbolDir = await getOrFetchSymbolDir();
   const env = {
     ...process.env,
-    KICAD_SYMBOL_DIR: getSymbolDir(),
+    KICAD_SYMBOL_DIR: symbolDir,
   };
 
   return new Promise((resolveResult) => {
@@ -461,7 +470,7 @@ export async function runCircuitScript({
   timeout = 60_000,
 }) {
   const { cmd, args: pyArgs } = resolvePython();
-  const symbolDir = process.env.KICAD_SYMBOL_DIR || resolve(__dirname, '../../kicad-libraries/kicad-symbols');
+  const symbolDir = await getOrFetchSymbolDir();
 
   const cacheBase = join(homedir(), '.chip-circuit-cache');
   const jobDir = join(cacheBase, jobId);

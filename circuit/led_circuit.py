@@ -20,9 +20,23 @@ import warnings
 def _setup_skidl():
     symbol_dir = os.environ.get("KICAD_SYMBOL_DIR", "")
     if not symbol_dir or not os.path.exists(symbol_dir):
+        import tempfile
+        fallbacks = [
+            os.path.join(tempfile.gettempdir(), "chip-kicad-symbols"),
+            "/tmp/chip-kicad-symbols",
+            os.path.abspath(os.path.join(os.path.dirname(__file__), "../../kicad-symbols-master")),
+            os.path.abspath(os.path.join(os.path.dirname(__file__), "../kicad-symbols-master")),
+            "/opt/kicad-symbols",
+        ]
+        for fb in fallbacks:
+            if os.path.exists(fb):
+                symbol_dir = fb
+                break
+    if not symbol_dir or not os.path.exists(symbol_dir):
         raise EnvironmentError(
             f"KICAD_SYMBOL_DIR is not set or does not exist: {symbol_dir!r}"
         )
+    os.environ["KICAD_SYMBOL_DIR"] = symbol_dir
 
     # Must be set BEFORE importing skidl so it reads them on import
     os.environ.setdefault("KICAD8_SYMBOL_DIR", symbol_dir)

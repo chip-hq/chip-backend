@@ -51,8 +51,17 @@ export async function getOrFetchSymbolDir(partsToFetch = CORE_PARTS) {
   const tempSymbolDir = join(tmpdir(), 'chip-kicad-symbols');
   await mkdir(tempSymbolDir, { recursive: true });
 
+  // Ensure unique list of parts to fetch, normalizing extensions
+  const partsMap = new Map();
+  for (const item of [...CORE_PARTS, ...(partsToFetch || [])]) {
+    if (!item?.dir || !item?.part) continue;
+    const dir = item.dir.endsWith('.kicad_symdir') ? item.dir : `${item.dir}.kicad_symdir`;
+    const part = item.part.endsWith('.kicad_sym') ? item.part : `${item.part}.kicad_sym`;
+    partsMap.set(`${dir}/${part}`, { dir, part });
+  }
+
   // 3. Download requested parts into their symdir folders
-  const fetchPromises = partsToFetch.map(async (item) => {
+  const fetchPromises = Array.from(partsMap.values()).map(async (item) => {
     const symdirPath = join(tempSymbolDir, item.dir);
     const targetFilePath = join(symdirPath, item.part);
 

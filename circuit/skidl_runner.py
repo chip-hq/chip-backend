@@ -7,6 +7,7 @@ import os
 import sys
 import json
 import argparse
+import tempfile
 from pathlib import Path
 
 def get_kicad_symbol_dir():
@@ -16,8 +17,11 @@ def get_kicad_symbol_dir():
     env_dir = os.environ.get("KICAD_SYMBOL_DIR")
     if env_dir and os.path.exists(env_dir):
         return os.path.abspath(env_dir)
-    # Common local and system fallback paths
+    # Common local, temp cache, and system fallback paths
     fallbacks = [
+        # On-demand R2 CDN cache path
+        Path(tempfile.gettempdir()) / "chip-kicad-symbols",
+        Path("/tmp/chip-kicad-symbols"),
         # Relative to project root
         Path(__file__).resolve().parent.parent.parent / "kicad-symbols-master",
         Path(__file__).resolve().parent.parent / "kicad-symbols-master",
