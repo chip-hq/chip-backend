@@ -800,9 +800,7 @@ async function getActiveDefinition(projectId, uid) {
       circuitName: `${projectId} Circuit`,
       projectId,
       version: 0,
-      components: [
-        { ref: 'U1', name: 'ESP32-PICO-D4', lib: 'ESP32-PICO-D4', value: 'ESP32-PICO-D4' },
-      ],
+      components: [],
       connections: [],
       ercErrors: [],
       ercWarnings: [],
@@ -890,9 +888,6 @@ router.post('/api/projects/:projectId/circuit/components', async (req, res, next
     if (!ref) return res.status(400).json({ error: 'Missing required parameter: ref' });
 
     const { currentVersion, definition } = await getActiveDefinition(projectId, uid);
-    if ((definition.components || []).find((c) => c.ref.toUpperCase() === ref.toUpperCase())) {
-      return res.status(400).json({ error: `Component '${ref}' already exists.` });
-    }
 
     const newComp = {
       ref: ref.trim(),
@@ -901,7 +896,16 @@ router.post('/api/projects/:projectId/circuit/components', async (req, res, next
       value: value ? String(value).trim() : (part || name || ref).trim(),
     };
 
-    definition.components = [...(definition.components || []), newComp];
+    const existingIndex = (definition.components || []).findIndex(
+      (c) => c.ref.toUpperCase() === ref.trim().toUpperCase()
+    );
+
+    if (existingIndex >= 0) {
+      definition.components[existingIndex] = newComp;
+    } else {
+      definition.components = [...(definition.components || []), newComp];
+    }
+
     const nextVersion = (currentVersion || 0) + 1;
     definition.version = nextVersion;
 

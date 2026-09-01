@@ -106,12 +106,16 @@ def test_part_load(lib_name="R", part_name="R"):
             reset()
 
             part = None
+            extra_libs = ['RF_Module', 'MCU_Espressif', 'MCU_Module', 'Device', 'Sensor', 'Sensor_Optical', 'Regulator_Linear', 'Connector_Generic', 'Switch']
             candidates = [
                 (lib_name, part_name),
                 (part_name, part_name),
                 (lib_name, lib_name),
                 (part_name, lib_name),
             ]
+            for el in extra_libs:
+                candidates.append((el, part_name))
+
             last_err = None
             for l_cand, n_cand in candidates:
                 if not l_cand or not n_cand:
@@ -166,12 +170,15 @@ def get_part_details(lib_name, part_name):
             reset()
 
             part = None
+            extra_libs = ['RF_Module', 'MCU_Espressif', 'MCU_Module', 'Device', 'Sensor', 'Sensor_Optical', 'Regulator_Linear', 'Connector_Generic', 'Switch']
             candidates = [
                 (lib_name, part_name),
                 (part_name, part_name),
                 (lib_name, lib_name),
                 (part_name, lib_name),
             ]
+            for el in extra_libs:
+                candidates.append((el, part_name))
             last_err = None
             for l_cand, n_cand in candidates:
                 if not l_cand or not n_cand:
