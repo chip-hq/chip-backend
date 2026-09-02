@@ -12,33 +12,73 @@ import { getOrFetchSymbolDir } from './r2-symbols.js';
 const svgCache = new Map();
 
 /**
- * Normalizes library directory and part names
+ * Normalizes library directory and part names with candidate directory search
  */
-function resolveLibraryAndPart(lib, part) {
+function resolveLibraryCandidates(lib, part) {
   let cleanLib = String(lib || '').trim();
   let cleanPart = String(part || '').trim();
 
-  // Alias maps for common shortcuts
-  const libAliases = {
-    'R': 'Device',
-    'C': 'Device',
-    'L': 'Device',
-    'D': 'Device',
-    'LED': 'Device',
-    'SW': 'Switch',
-    'ESP32': 'RF_Module',
-    'CONN': 'Connector_Generic',
-    'OLED': 'Display_Graphic',
-  };
-
-  if (libAliases[cleanLib.toUpperCase()]) {
-    cleanLib = libAliases[cleanLib.toUpperCase()];
+  // If part was passed inside lib (e.g. lib=ESP32-PICO-D4)
+  if (cleanLib.includes('ESP32') && cleanPart.includes('ESP32')) {
+    cleanPart = cleanPart.replace(/\.kicad_sym$/, '');
   }
 
-  const symdir = cleanLib.endsWith('.kicad_symdir') ? cleanLib : `${cleanLib}.kicad_symdir`;
-  const symfile = cleanPart.endsWith('.kicad_sym') ? cleanPart : `${cleanPart}.kicad_sym`;
+  const cleanPartName = cleanPart.replace(/\.kicad_sym$/, '');
+  const symfile = `${cleanPartName}.kicad_sym`;
 
-  return { symdir, symfile, libName: cleanLib, partName: cleanPart.replace(/\.kicad_sym$/, '') };
+  const candidates = [];
+
+  // Direct specified library first
+  if (cleanLib) {
+    candidates.push(cleanLib.endsWith('.kicad_symdir') ? cleanLib : `${cleanLib}.kicad_symdir`);
+  }
+
+  // Smart domain-specific directories
+  const pUpper = cleanPartName.toUpperCase();
+  if (pUpper.includes('ESP32') || pUpper.includes('ESP8266')) {
+    candidates.push('MCU_Espressif.kicad_symdir');
+    candidates.push('RF_Module.kicad_symdir');
+  }
+  if (pUpper.includes('RP2040') || pUpper.includes('PICO')) {
+    candidates.push('MCU_RaspberryPi.kicad_symdir');
+    candidates.push('MCU_Module.kicad_symdir');
+  }
+  if (pUpper.includes('NANO') || pUpper.includes('ATMEGA') || pUpper.includes('ATTINY')) {
+    candidates.push('MCU_Module.kicad_symdir');
+    candidates.push('MCU_Microchip_ATmega.kicad_symdir');
+  }
+  if (pUpper.includes('OLED') || pUpper.includes('SSD1306') || pUpper.includes('SH1106') || pUpper.includes('DISPLAY')) {
+    candidates.push('Display_Graphic.kicad_symdir');
+  }
+  if (pUpper.includes('SENSOR') || pUpper.includes('DHT') || pUpper.includes('BME') || pUpper.includes('BMP') || pUpper.includes('MPU') || pUpper.includes('LDR') || pUpper.includes('TCRT')) {
+    candidates.push('Sensor.kicad_symdir');
+    candidates.push('Sensor_Optical.kicad_symdir');
+    candidates.push('Sensor_Proximity.kicad_symdir');
+  }
+  if (pUpper.includes('CONN') || pUpper.startsWith('J') || pUpper.startsWith('P')) {
+    candidates.push('Connector_Generic.kicad_symdir');
+  }
+  if (pUpper.includes('AMS1117') || pUpper.includes('7805') || pUpper.includes('REGULATOR')) {
+    candidates.push('Regulator_Linear.kicad_symdir');
+  }
+  if (pUpper.includes('SW') || pUpper.includes('BUTTON')) {
+    candidates.push('Switch.kicad_symdir');
+  }
+
+  // Universal fallbacks
+  candidates.push('Device.kicad_symdir');
+  candidates.push('RF_Module.kicad_symdir');
+  candidates.push('MCU_Espressif.kicad_symdir');
+  candidates.push('Connector_Generic.kicad_symdir');
+
+  // Deduplicate
+  const uniqueDirs = Array.from(new Set(candidates));
+
+  return {
+    symfile,
+    partName: cleanPartName,
+    candidateDirs: uniqueDirs,
+  };
 }
 
 /**
@@ -259,6 +299,25 @@ function convertSymbolAstToSvg(ast, partName) {
         // Pin lead line + connection terminal dot
         svgElements.push(`<line x1="${px}" y1="${py}" x2="${endX}" y2="${endY}" stroke="#334155" stroke-width="0.25" />`);
         svgElements.push(`<circle cx="${px}" cy="${py}" r="0.45" fill="#ffffff" stroke="#334155" stroke-width="0.2" />`);
+
+        // Pin Name Label (rendered inside the IC body)
+        if (pinName && pinName !== '~') {
+          let textAnchor = 'start';
+          let textX = endX + 0.5;
+          let textY = endY + 0.35;
+          if (dir === 'right') {
+            textAnchor = 'end';
+            textX = endX - 0.5;
+          }
+          svgElements.push(`<text x="${textX}" y="${textY}" text-anchor="${textAnchor}" font-family="monospace" font-size="0.75" font-weight="600" fill="#475569">${pinName}</text>`);
+        }
+
+        // Pin Number Label (rendered above the pin lead)
+        if (pinNum) {
+          const numX = (px + endX) / 2;
+          const numY = py - 0.35;
+          svgElements.push(`<text x="${numX}" y="${numY}" text-anchor="middle" font-family="monospace" font-size="0.55" fill="#94a3b8">${pinNum}</text>`);
+        }
       }
     }
 
@@ -297,45 +356,47 @@ function convertSymbolAstToSvg(ast, partName) {
  * Primary function: Gets or converts a KiCad symbol from R2 to SVG
  */
 export async function getSymbolSvg(lib, part) {
-  const { symdir, symfile, libName, partName } = resolveLibraryAndPart(lib, part);
-  const cacheKey = `${symdir}/${symfile}`.toLowerCase();
+  const { symfile, partName, candidateDirs } = resolveLibraryCandidates(lib, part);
+  const cacheKey = `${lib}:${part}`.toLowerCase();
 
   if (svgCache.has(cacheKey)) {
     return svgCache.get(cacheKey);
   }
 
-  try {
-    const symbolDir = await getOrFetchSymbolDir([{ dir: symdir, part: symfile }]);
-    const fullPath = join(symbolDir, symdir, symfile);
+  for (const symdir of candidateDirs) {
+    try {
+      const symbolDir = await getOrFetchSymbolDir([{ dir: symdir, part: symfile }]);
+      const fullPath = join(symbolDir, symdir, symfile);
 
-    if (!existsSync(fullPath)) {
-      return { success: false, error: `Symbol ${symdir}/${symfile} not found on R2.` };
+      if (!existsSync(fullPath)) {
+        continue;
+      }
+
+      const content = await readFile(fullPath, 'utf-8');
+      const tokens = tokenizeSExpr(content);
+      const ast = parseSExpr(tokens);
+      const converted = convertSymbolAstToSvg(ast, partName);
+
+      if (converted) {
+        const result = {
+          success: true,
+          library: symdir.replace(/\.kicad_symdir$/, ''),
+          part: partName,
+          svg: converted.svg,
+          viewBox: converted.viewBox,
+          pins: converted.pins,
+        };
+
+        svgCache.set(cacheKey, result);
+        return result;
+      }
+    } catch {
+      // Try next directory candidate
     }
-
-    const content = await readFile(fullPath, 'utf-8');
-    const tokens = tokenizeSExpr(content);
-    const ast = parseSExpr(tokens);
-    const converted = convertSymbolAstToSvg(ast, partName);
-
-    if (!converted) {
-      return { success: false, error: `Failed to parse symbol graphics for ${partName}.` };
-    }
-
-    const result = {
-      success: true,
-      library: libName,
-      part: partName,
-      svg: converted.svg,
-      viewBox: converted.viewBox,
-      pins: converted.pins,
-    };
-
-    svgCache.set(cacheKey, result);
-    return result;
-  } catch (err) {
-    return {
-      success: false,
-      error: `SVG conversion error for ${lib}:${part}: ${err.message}`,
-    };
   }
+
+  return {
+    success: false,
+    error: `Symbol ${partName} (${symfile}) not found in any candidate KiCad library on R2.`,
+  };
 }
