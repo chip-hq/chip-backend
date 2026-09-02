@@ -10,7 +10,6 @@ import {
   searchKiCadSymbols,
   getComponentDetails,
 } from '../circuit/index.js';
-import { getSymbolSvg } from '../circuit/kicad-to-svg.js';
 import { getDb, isDbConnected } from '../services/storage.js';
 
 const router = Router();
@@ -278,22 +277,6 @@ router.get('/api/circuit/libraries/pins', async (req, res, next) => {
       return res.status(404).json({ error: true, message: details.error });
     }
     res.json({ library: lib, part, pinCount: details.pinCount, pins: details.pins });
-  } catch (err) { next(err); }
-});
-
-/**
- * GET /api/circuit/symbols/svg
- * Fetches and converts a KiCad symbol from Cloudflare R2 into SVG markup.
- */
-router.get('/api/circuit/symbols/svg', async (req, res, next) => {
-  try {
-    const lib  = String(req.query.lib  || req.query.library || 'Device');
-    const part = String(req.query.part || req.query.name || 'R');
-    const result = await getSymbolSvg(lib, part);
-    if (!result.success) {
-      return res.status(404).json(result);
-    }
-    res.json(result);
   } catch (err) { next(err); }
 });
 

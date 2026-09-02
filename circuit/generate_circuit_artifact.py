@@ -183,10 +183,7 @@ def normalize_duplicate_refs(circuit_def: dict) -> dict:
 def _setup_skidl():
     symbol_dir = os.environ.get("KICAD_SYMBOL_DIR", "")
     if not symbol_dir or not os.path.exists(symbol_dir):
-        import tempfile
         fallbacks = [
-            os.path.join(tempfile.gettempdir(), "chip-kicad-symbols"),
-            "/tmp/chip-kicad-symbols",
             os.path.abspath(os.path.join(os.path.dirname(__file__), "../../kicad-symbols-master")),
             os.path.abspath(os.path.join(os.path.dirname(__file__), "../kicad-symbols-master")),
             "C:/Users/josep/Downloads/kicad-symbols-master",
