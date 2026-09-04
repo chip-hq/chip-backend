@@ -223,11 +223,12 @@ function isNetworkFailure(logLines) {
   return logLines.some((line) => NETWORK_FAILURE_PATTERNS.some((re) => re.test(line)));
 }
 
-function runPio(cmd, args, { cwd, timeout, emit }) {
+function runPio(cmd, args, { cwd, timeout, emit, env: extraEnv = {} }) {
   const child = spawn(cmd, args, {
     cwd,
     env: {
       ...process.env,
+      ...extraEnv,
       // Ensure non-interactive PlatformIO in containers / CI
       PLATFORMIO_DISABLE_PROGRESSBAR: 'true',
       CI: process.env.CI || '1',
@@ -323,17 +324,36 @@ export async function compileFirmware({
 
   await writeFile(join(srcDir, 'main.cpp'), preparedSource, 'utf8');
 
-  emit('[COMPILE] Running: pio run …');
+  emit('[COMPILE] Running: pio run -j 1 …');
 
   const { cmd, argsPrefix } = await resolvePio();
-  const args = [...argsPrefix, 'run'];
+  // Single-job compile — U8g2 / large libs OOM-kill the Railway container with default parallelism
+  const args = [...argsPrefix, 'run', '-j', '1'];
   emit(`[COMPILE] Spawning: ${cmd} ${args.join(' ')}`);
 
   try {
     await withCompileLock(async () => {
       try {
-        await runPio(cmd, args, { cwd: projectDir, timeout, emit });
+        await runPio(cmd, args, {
+          cwd: projectDir,
+          timeout,
+          emit,
+          env: {
+            // Cap toolchain parallelism further on small hosts
+            PLATFORMIO_BUILD_FLAGS: process.env.PLATFORMIO_BUILD_FLAGS || '',
+            MAKEFLAGS: '-j1',
+          },
+        });
       } catch (err) {
+        if (/Killed|out of memory|ENOMEM/i.test(log.join('\n')) || err.exitCode === 137) {
+          const oom = new Error(
+            'Compile ran out of memory on the build server (process was killed). ' +
+              'Use a smaller library (e.g. Adafruit SH110X instead of U8g2) and retry.',
+          );
+          oom.code = 'COMPILE_OOM';
+          oom.log = log;
+          throw oom;
+        }
         if (resolvedLibs.length > 0 && isNetworkFailure(log)) {
           throw new LibraryNetworkError(
             'Failed to download libraries from the PlatformIO Registry (network error). ' +

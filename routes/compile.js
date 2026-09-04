@@ -137,15 +137,18 @@ router.post('/api/compile', asyncRoute(async (req, res) => {
   } catch (err) {
     const isLibError = err instanceof LibraryResolveError || err.code === 'LIBRARY_RESOLVE';
     const isNetError = err instanceof LibraryNetworkError || err.code === 'LIBRARY_NETWORK';
+    const isOom = err.code === 'COMPILE_OOM';
     const errorCode = isLibError
       ? 'LIBRARY_RESOLVE'
       : isNetError
         ? 'LIBRARY_NETWORK'
-        : 'COMPILE_FAILED';
-    const clientError = (isLibError || isNetError)
+        : isOom
+          ? 'COMPILE_OOM'
+          : 'COMPILE_FAILED';
+    const clientError = (isLibError || isNetError || isOom)
       ? err.message
       : 'Firmware compilation failed. Please check your C++ syntax.';
-    const status = (isLibError || isNetError) ? 400 : 500;
+    const status = (isLibError || isNetError || isOom) ? 400 : 500;
 
     updateJob(jobId, {
       status: 'error',
