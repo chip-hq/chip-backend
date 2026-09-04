@@ -326,11 +326,17 @@ router.post('/oauth/finalize', express.json(), asyncRoute(async (req, res) => {
   await saveOAuthCode(code, codeData);
   await deleteOAuthSession(sessionId);
 
-  // Derive agent name from redirect URI so Claude and ChatGPT get separate slots
+  // Derive agent name — check redirect_uri / client_name signals BEFORE clientId,
+  // because dynamic registration historically prefixed every client_id with "claude_".
   const agentHint = (() => {
     const uri = (session.redirectUri || '').toLowerCase();
-    if (uri.includes('claude') || uri.includes('anthropic')) return { name: 'Claude', key: 'claude' };
-    if (uri.includes('chatgpt') || uri.includes('openai')) return { name: 'ChatGPT', key: 'chatgpt' };
+    const cid = (session.clientId || '').toLowerCase();
+    if (uri.includes('chatgpt') || uri.includes('openai') || cid.includes('chatgpt') || cid.includes('openai')) {
+      return { name: 'ChatGPT', key: 'chatgpt' };
+    }
+    if (uri.includes('claude') || uri.includes('anthropic') || cid.includes('claude') || cid.includes('anthropic')) {
+      return { name: 'Claude', key: 'claude' };
+    }
     return { name: 'MCP Agent', key: session.clientId?.slice(0, 12) || 'mcpagent' };
   })();
 
@@ -380,7 +386,9 @@ router.post('/oauth/token', express.urlencoded({ extended: false }), express.jso
 
   await deleteOAuthCode(code);
 
-  const base = `${req.protocol}://${req.get('host')}`;
+  const proto = req.get('x-forwarded-proto') || req.protocol || 'https';
+  const host = req.get('x-forwarded-host') || req.get('host');
+  const base = (process.env.PUBLIC_URL || `${proto}://${host}`).replace(/\/+$/, '');
   const accessToken = signJWT({
     iss: base,
     sub: codeData.userId,
@@ -396,12 +404,16 @@ router.post('/oauth/token', express.urlencoded({ extended: false }), express.jso
     name: codeData.email,
   }, 30 * 24 * 3600);
 
-  // Derive agent name from the audience / clientId so Claude and ChatGPT get separate slots
+  // Derive agent name — prefer redirect_uri over clientId (client ids may be claude_* even for ChatGPT)
   const agentHint = (() => {
     const clientId = (codeData.clientId || '').toLowerCase();
     const redirectUri = (codeData.redirectUri || '').toLowerCase();
-    if (clientId.includes('claude') || redirectUri.includes('claude') || redirectUri.includes('anthropic')) return { name: 'Claude', key: 'claude' };
-    if (clientId.includes('chatgpt') || redirectUri.includes('chatgpt') || redirectUri.includes('openai')) return { name: 'ChatGPT', key: 'chatgpt' };
+    if (redirectUri.includes('chatgpt') || redirectUri.includes('openai') || clientId.includes('chatgpt') || clientId.includes('openai')) {
+      return { name: 'ChatGPT', key: 'chatgpt' };
+    }
+    if (redirectUri.includes('claude') || redirectUri.includes('anthropic') || clientId.includes('claude') || clientId.includes('anthropic')) {
+      return { name: 'Claude', key: 'claude' };
+    }
     return { name: 'MCP Agent', key: clientId.slice(0, 12) || 'mcpagent' };
   })();
 

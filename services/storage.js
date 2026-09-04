@@ -60,12 +60,21 @@ export async function initStorage() {
     await client.connect();
     await db.command({ ping: 1 });
 
+    // Drop legacy unique(userId) BEFORE recreating indexes — it blocked ChatGPT when Claude was already connected
+    try {
+      await db.collection('agents').dropIndex('userId_1');
+    } catch {
+      // index may already be gone
+    }
+
     await Promise.all([
       db.collection('jobs').createIndex({ jobId: 1 }, { unique: true }),
       db.collection('jobs').createIndex({ userId: 1, createdAt: -1 }),
       db.collection('devices').createIndex({ deviceId: 1 }, { unique: true }),
       db.collection('devices').createIndex({ userId: 1, deviceId: 1 }),
-      db.collection('agents').createIndex({ userId: 1 }, { unique: true }),
+      // Compound unique: same user can have Claude + ChatGPT connected at once
+      db.collection('agents').createIndex({ userId: 1, clientKey: 1 }, { unique: true }),
+      db.collection('agents').createIndex({ userId: 1 }),
       db.collection('preferences').createIndex({ userId: 1 }, { unique: true }),
       db.collection('oauth_sessions').createIndex({ sessionId: 1 }, { unique: true }),
       db.collection('oauth_sessions').createIndex({ createdAt: 1 }, { expireAfterSeconds: 1800 }),
