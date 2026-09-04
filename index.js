@@ -27,6 +27,10 @@ import circuitRouter from './routes/circuit.js';
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Railway / reverse proxies set X-Forwarded-For — required for express-rate-limit
+app.set('trust proxy', 1);
+app.disable('x-powered-by');
+
 // Lock CORS to the configured frontend origin in production
 const FRONTEND_URL = (process.env.FRONTEND_URL || 'http://localhost:5173').replace(/\/+$/, '');
 const ALLOWED_ORIGINS = new Set([
