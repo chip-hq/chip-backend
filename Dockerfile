@@ -30,6 +30,10 @@ RUN npm install --omit=dev
 # Copy application source
 COPY . .
 
+# Persistent build/library cache (mount a volume here in production when possible)
+ENV CHIP_BUILD_CACHE_DIR=/var/cache/chip-build
+RUN mkdir -p /var/cache/chip-build/libraries /var/cache/chip-build/builds
+
 ENV PORT=3000
 EXPOSE 3000
 

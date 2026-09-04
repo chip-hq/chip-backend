@@ -3,7 +3,12 @@ import { writeFile, mkdir } from 'fs/promises';
 import { join } from 'path';
 import { homedir } from 'os';
 import { createJob, updateJob, recordAgentConnection, getPreference } from '../services/storage.js';
-import { compileFirmware } from '../services/platformio-runner.js';
+import {
+  compileFirmware,
+  normalizeLibraries,
+  LibraryResolveError,
+  LibraryNetworkError,
+} from '../services/platformio-runner.js';
 import { deviceSockets } from '../services/websocket.js';
 import { resolveUserId } from '../services/user-resolver.js';
 import { asyncRoute } from '../middleware/errorHandler.js';
@@ -14,7 +19,13 @@ const FIRMWARE_B64_CACHE = join(homedir(), '.chip-build-cache', 'last_firmware.b
 const ALLOWED_BOARDS = new Set(['esp32', 'esp32dev', 'esp32s2', 'esp32s3', 'esp32c3']);
 
 router.post('/api/compile', asyncRoute(async (req, res) => {
-  const { source, board: rawBoard = 'esp32', webCompanion } = req.body || {};
+  const {
+    source,
+    board: rawBoard = 'esp32',
+    webCompanion,
+    libraries,
+    libDeps,
+  } = req.body || {};
 
   if (!source || typeof source !== 'string' || source.trim().length === 0) {
     return res.status(400).json({ error: '"source" (C++ string) is required' });
@@ -23,6 +34,13 @@ router.post('/api/compile', asyncRoute(async (req, res) => {
   const board = typeof rawBoard === 'string' && ALLOWED_BOARDS.has(rawBoard.toLowerCase())
     ? rawBoard.toLowerCase()
     : 'esp32';
+
+  let resolvedLibs;
+  try {
+    resolvedLibs = normalizeLibraries(libraries ?? libDeps);
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
 
   if (req.userId) {
     recordAgentConnection({
@@ -54,19 +72,30 @@ router.post('/api/compile', asyncRoute(async (req, res) => {
     phase: 'compile',
     board,
     sourceCode: source,
+    libraries: resolvedLibs,
     webCompanion: typeof webCompanion === 'string' ? webCompanion : null,
     filename: `firmware_${board}.bin`,
     status: 'compiling',
     progress: 0,
-    log: ['Compile job started…'],
+    log: [
+      'Compile job started…',
+      ...(resolvedLibs.length
+        ? [`Libraries: ${resolvedLibs.join(', ')}`]
+        : ['Libraries: (none — core only)']),
+    ],
   });
 
-  console.log(`[COMPILE] Job ${jobId} started — board: ${board}${webCompanion ? ' (with Web Companion)' : ''}`);
+  console.log(
+    `[COMPILE] Job ${jobId} started — board: ${board}` +
+    `${webCompanion ? ' (with Web Companion)' : ''}` +
+    `${resolvedLibs.length ? ` libs=[${resolvedLibs.join(', ')}]` : ''}`,
+  );
 
   try {
     const result = await compileFirmware({
       source,
       board,
+      libraries: resolvedLibs,
       jobId,
       onLog: (line) => {
         updateJob(jobId, { logLine: line });
@@ -81,6 +110,7 @@ router.post('/api/compile', asyncRoute(async (req, res) => {
       offset: result.offset || '0x0',
       filename: `firmware_${board}.bin`,
       sourceCode: source,
+      libraries: resolvedLibs,
       webCompanion: typeof webCompanion === 'string' ? webCompanion : null,
       logLine: `Done — ${result.binSize} bytes in ${(result.durationMs / 1000).toFixed(1)}s`,
     });
@@ -101,12 +131,38 @@ router.post('/api/compile', asyncRoute(async (req, res) => {
       binSize: result.binSize,
       offset: result.offset || '0x0',
       durationMs: result.durationMs,
+      libraries: resolvedLibs,
       log: result.log,
     });
   } catch (err) {
-    updateJob(jobId, { status: 'error', error: err.message, logLine: `Error: ${err.message}` });
+    const isLibError = err instanceof LibraryResolveError || err.code === 'LIBRARY_RESOLVE';
+    const isNetError = err instanceof LibraryNetworkError || err.code === 'LIBRARY_NETWORK';
+    const errorCode = isLibError
+      ? 'LIBRARY_RESOLVE'
+      : isNetError
+        ? 'LIBRARY_NETWORK'
+        : 'COMPILE_FAILED';
+    const clientError = (isLibError || isNetError)
+      ? err.message
+      : 'Firmware compilation failed. Please check your C++ syntax.';
+    const status = (isLibError || isNetError) ? 400 : 500;
+
+    updateJob(jobId, {
+      status: 'error',
+      error: err.message,
+      errorCode,
+      logLine: `Error: ${err.message}`,
+    });
     console.error(`[COMPILE] Job ${jobId} failed:`, err.message);
-    return res.status(500).json({ jobId, status: 'error', error: 'Firmware compilation failed. Please check your C++ syntax.' });
+
+    return res.status(status).json({
+      jobId,
+      status: 'error',
+      error: clientError,
+      errorCode,
+      ...(isLibError && err.unresolved ? { unresolvedLibraries: err.unresolved } : {}),
+      log: err.log ?? undefined,
+    });
   }
 }));
 

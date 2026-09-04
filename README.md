@@ -22,13 +22,15 @@ backend/
 │   ├── storage.js                  ← MongoDB (pooled, SSL, masked) + in-memory fallback
 │   ├── websocket.js                ← WebSocket server + device socket registry
 │   ├── user-resolver.js            ← resolveUserId() helper
-│   └── platformio-runner.js        ← PlatformIO compiler engine
+│   └── platformio-runner.js        ← PlatformIO compiler engine (+ optional lib_deps)
+│
+├── libraries/                      ← Docs for shared lib cache (~/.chip-build-cache/libraries)
 │
 └── routes/
     ├── oauth.js                    ← OAuth 2.1 + PKCE endpoints
     ├── devices.js                  ← GET /api/devices
     ├── jobs.js                     ← GET|DELETE /api/jobs, GET /api/jobs/:id/download
-    ├── compile.js                  ← POST /api/compile
+    ├── compile.js                  ← POST /api/compile (optional libraries / libDeps)
     └── flash.js                    ← POST /api/flash
 ```
 
