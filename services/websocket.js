@@ -3,12 +3,38 @@ import { upsertDevice, setDeviceConnected, updateJob } from './storage.js';
 
 export const deviceSockets = new Map();
 
+/** Keepalive interval — Railway/proxies drop idle WS ~60s without traffic. */
+const HEARTBEAT_MS = 25_000;
+
 export function setupWebSocket(server) {
   const wss = new WebSocketServer({ server });
+
+  const heartbeatTimer = setInterval(() => {
+    for (const ws of wss.clients) {
+      if (ws.isAlive === false) {
+        console.log('[WS] Terminating unresponsive client');
+        ws.terminate();
+        continue;
+      }
+      ws.isAlive = false;
+      try {
+        // Protocol-level ping (browser auto-pongs) + app-level ping for strict proxies
+        ws.ping();
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'ping', t: Date.now() }));
+        }
+      } catch {
+        ws.terminate();
+      }
+    }
+  }, HEARTBEAT_MS);
+
+  wss.on('close', () => clearInterval(heartbeatTimer));
 
   wss.on('connection', (ws, req) => {
     let deviceId = 'default_device';
     let userId = null;
+    ws.isAlive = true;
 
     try {
       const url = new URL(req.url, 'http://localhost');
@@ -22,9 +48,21 @@ export function setupWebSocket(server) {
     upsertDevice({ deviceId, chip: 'ESP32', connected: true, userId });
     console.log(`[WS] New client connection from ${req.socket.remoteAddress}${userId ? ` [User: ${userId}]` : ''}`);
 
+    ws.on('pong', () => {
+      ws.isAlive = true;
+    });
+
     ws.on('message', (message) => {
       try {
         const data = JSON.parse(message.toString());
+
+        if (data.type === 'pong' || data.type === 'ping') {
+          ws.isAlive = true;
+          if (data.type === 'ping' && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'pong', t: Date.now() }));
+          }
+          return;
+        }
 
         if (data.type === 'register') {
           deviceId = data.deviceId || 'default_device';
