@@ -3,6 +3,10 @@ import { writeFile, readFile, access, mkdir, rm } from 'fs/promises';
 import { constants, existsSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
+import {
+  inferLibrariesFromSource,
+  librariesForComponents,
+} from './hardware-components.js';
 
 const BOARD_MAP = {
   esp32: 'esp32dev',
@@ -152,6 +156,25 @@ export function normalizeLibraries(libraries) {
   return out;
 }
 
+/** Merge explicit libs with inferred libs (explicit first, then fill gaps). */
+export function mergeLibraries(explicit = [], inferred = []) {
+  const out = [];
+  const seen = new Set();
+  for (const lib of [...explicit, ...inferred]) {
+    const key = String(lib).split('@')[0].trim().toLowerCase();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(lib);
+  }
+  if (out.length > MAX_LIBRARIES) {
+    throw new Error(`Too many libraries after auto-infer (max ${MAX_LIBRARIES})`);
+  }
+  return out;
+}
+
+export { inferLibrariesFromSource, librariesForComponents };
+export { listHardwareComponents, resolveComponents } from './hardware-components.js';
+
 export function buildIni(boardId, libDeps = []) {
   const lines = [];
 
@@ -282,6 +305,7 @@ export async function compileFirmware({
   board = 'esp32',
   libraries,
   libDeps,
+  components,
   jobId = `job_${Date.now()}`,
   onLog = () => {},
   timeout = 300_000,
@@ -289,7 +313,10 @@ export async function compileFirmware({
   const boardId = BOARD_MAP[board.toLowerCase()] ?? 'esp32dev';
   const startMs = Date.now();
   const log = [];
-  const resolvedLibs = normalizeLibraries(libraries ?? libDeps);
+  const explicitLibs = normalizeLibraries(libraries ?? libDeps);
+  const componentLibs = librariesForComponents(components ?? []);
+  const inferredLibs = inferLibrariesFromSource(source);
+  const resolvedLibs = mergeLibraries(explicitLibs, [...componentLibs, ...inferredLibs]);
 
   const emit = (line) => {
     log.push(line);
@@ -306,8 +333,14 @@ export async function compileFirmware({
 
   emit(`[COMPILE] Project dir: ${projectDir}`);
   emit(`[COMPILE] Board: ${boardId}`);
+  if (components?.length) {
+    emit(`[COMPILE] Components: ${components.join(', ')}`);
+  }
   if (resolvedLibs.length > 0) {
     emit(`[COMPILE] Libraries (${resolvedLibs.length}): ${resolvedLibs.join(', ')}`);
+    if (!explicitLibs.length && (componentLibs.length || inferredLibs.length)) {
+      emit('[COMPILE] Libraries auto-resolved from components / #includes');
+    }
     emit(`[COMPILE] Library cache: ${LIB_CACHE_DIR}`);
   } else {
     emit('[COMPILE] Libraries: (none — core only)');

@@ -6,6 +6,10 @@ import { createJob, updateJob, recordAgentConnection, getPreference } from '../s
 import {
   compileFirmware,
   normalizeLibraries,
+  inferLibrariesFromSource,
+  librariesForComponents,
+  mergeLibraries,
+  listHardwareComponents,
   LibraryResolveError,
   LibraryNetworkError,
 } from '../services/platformio-runner.js';
@@ -18,6 +22,10 @@ const router = Router();
 const FIRMWARE_B64_CACHE = join(homedir(), '.chip-build-cache', 'last_firmware.b64');
 const ALLOWED_BOARDS = new Set(['esp32', 'esp32dev', 'esp32s2', 'esp32s3', 'esp32c3']);
 
+router.get('/api/hardware-components', asyncRoute(async (_req, res) => {
+  return res.json({ components: listHardwareComponents() });
+}));
+
 router.post('/api/compile', asyncRoute(async (req, res) => {
   const {
     source,
@@ -25,6 +33,7 @@ router.post('/api/compile', asyncRoute(async (req, res) => {
     webCompanion,
     libraries,
     libDeps,
+    components,
   } = req.body || {};
 
   if (!source || typeof source !== 'string' || source.trim().length === 0) {
@@ -36,8 +45,15 @@ router.post('/api/compile', asyncRoute(async (req, res) => {
     : 'esp32';
 
   let resolvedLibs;
+  let componentList = [];
   try {
-    resolvedLibs = normalizeLibraries(libraries ?? libDeps);
+    componentList = Array.isArray(components)
+      ? components.filter((c) => typeof c === 'string' && c.trim()).map((c) => c.trim())
+      : [];
+    const explicit = normalizeLibraries(libraries ?? libDeps);
+    const fromComponents = librariesForComponents(componentList);
+    const inferred = inferLibrariesFromSource(source);
+    resolvedLibs = mergeLibraries(explicit, [...fromComponents, ...inferred]);
   } catch (err) {
     return res.status(400).json({ error: err.message });
   }
@@ -73,12 +89,14 @@ router.post('/api/compile', asyncRoute(async (req, res) => {
     board,
     sourceCode: source,
     libraries: resolvedLibs,
+    components: componentList,
     webCompanion: typeof webCompanion === 'string' ? webCompanion : null,
     filename: `firmware_${board}.bin`,
     status: 'compiling',
     progress: 0,
     log: [
       'Compile job started…',
+      ...(componentList.length ? [`Components: ${componentList.join(', ')}`] : []),
       ...(resolvedLibs.length
         ? [`Libraries: ${resolvedLibs.join(', ')}`]
         : ['Libraries: (none — core only)']),
@@ -88,6 +106,7 @@ router.post('/api/compile', asyncRoute(async (req, res) => {
   console.log(
     `[COMPILE] Job ${jobId} started — board: ${board}` +
     `${webCompanion ? ' (with Web Companion)' : ''}` +
+    `${componentList.length ? ` components=[${componentList.join(', ')}]` : ''}` +
     `${resolvedLibs.length ? ` libs=[${resolvedLibs.join(', ')}]` : ''}`,
   );
 
@@ -96,6 +115,7 @@ router.post('/api/compile', asyncRoute(async (req, res) => {
       source,
       board,
       libraries: resolvedLibs,
+      components: componentList,
       jobId,
       onLog: (line) => {
         updateJob(jobId, { logLine: line });
