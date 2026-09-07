@@ -118,6 +118,8 @@ INTENT DETECTION — Read the user's request carefully before deciding what to d
 - If the user says "add", "place", "put", "include", "insert" a component or module → ONLY call add_component. Do NOT wire anything unless explicitly asked.
 - If the user says "wire", "connect", "build the automation", "connect the pins", "hook up" → call add_component AND connect_pins as needed.
 - If the user says "build" or "create an automation for [function]" with a specific use case (e.g. "build LED automation" or "connect DHT22 and relay") → add AND wire the complete hardware setup.
+- If the user asks to add, remove, delete, change, update, replace, or rewire a component, inspect the current project summary and use the appropriate add_component, remove_component, update_component, connect_pins, or disconnect_pins tools. Never create a second duplicate when the requested component already exists.
+- If you asked which component to remove and the user replies with only a part name or value, such as "the AMS1117", match it against the current component list and immediately call remove_component for that matching reference.
 - When summarizing your actions in your response, ALWAYS use the header "**Automation Summary**" (do NOT use "Circuit Summary").
 - Focus on hardware automation capabilities, pinout triggers, sensors, and actuator controls.
 
@@ -130,15 +132,35 @@ COMPONENT KNOWLEDGE — Use exact part names and libs:
 - SSD1306 OLED (0.96" I2C 128x64): ref "DS1", lib "Display_Graphic", part "SSD1306_128x64", pins: "VCC", "GND", "SCL", "SDA".
 - GME12864 / SH1106 OLED (1.3" I2C 128x64): ref "DS1", lib "Display_Graphic", part "GME12864", value "GME12864", pins: "VCC", "GND", "SCL", "SDA". NOTE: This uses the SH110X driver, NOT SSD1306.
 - NPN Transistor: ref "Q1", lib "Device", part "2N2222", pins: "B" (Base), "C" (Collector), "E" (Emitter).
+- DC power supply / battery: ref "PWR1", lib "power", part "DC_Source", value such as "5V Supply", pins: "VOUT" and "GND".
+- 3.3 V regulator: ref "U2", lib "Regulator_Linear", part "AMS1117-3.3", value "3.3V Regulator", pins: "VI" (input), "VO" (3.3 V output), "GND".
 
 WIRING RULES (only apply when user explicitly wants wiring):
 - Format pin nodes strictly as "Ref.Pin" (e.g. "U1.IO2", "R1.1", "D1.A", "DS1.SDA").
 - I2C devices (OLED etc.): Connect DS1.SDA → U1.IO21 (net "I2C_SDA"), DS1.SCL → U1.IO22 (net "I2C_SCL"), DS1.VCC → U1.3V3 (net "3V3"), DS1.GND → U1.GND (net "GND").
 - LED output: U1.GPIO → R1.1 (net "LED_SIG"), R1.2 → D1.A (net "LED_A"), D1.K → U1.GND (net "GND").
 - Pushbutton: U1.GPIO → SW1.1 (net "BTN_SIG"), SW1.2 → U1.GND (net "GND"), add 10kΩ pull-up R from 3V3 → SW1.1.
+- Regulated ESP32 power: PWR1.VOUT → U2.VI (net "5V_RAW"), U2.VO → U1.3V3 (net "3V3"), and PWR1.GND → U2.GND → U1.GND (net "GND"). Add input/output capacitors only when requested or needed by the regulator datasheet.
 - Keep net names UPPERCASE and descriptive: "GND", "3V3", "I2C_SDA", "I2C_SCL", "LED_SIG", "BTN_SIG".
 
 Be clear and concise in your replies. Always tell the user what automation components you added or connected under "**Automation Summary**", and suggest next automation steps (e.g., adding sensors, triggers, or control logic).`;
+
+function resolveComponentFollowUp(message, history, circuitDef) {
+  const latestAssistant = [...history].reverse().find((item) => item.role === 'assistant')?.content || '';
+  const askedForRemovalChoice = /which one|specify|should i remove|remove .* or .*/i.test(latestAssistant);
+  if (!askedForRemovalChoice || /\b(remove|delete|disconnect|update|change|add|connect)\b/i.test(message)) return message;
+
+  const query = message.replace(/^(the|this|that)\s+/i, '').replace(/[^a-z0-9.\-_]/gi, '').toLowerCase();
+  if (!query) return message;
+
+  const match = (circuitDef.components || []).find((component) => {
+    const identity = `${component.ref} ${component.name || ''} ${component.value || ''} ${component.lib || ''}`.toLowerCase();
+    return identity.includes(query);
+  });
+  return match
+    ? `Remove ${match.ref} (${match.name || match.value || match.lib}) and all of its connections. The user selected this component in response to the previous removal clarification.`
+    : message;
+}
 
 /**
  * Loads current circuit definition from MongoDB
@@ -350,6 +372,7 @@ export async function handleCircuitChat({ projectId, userId = 'default_user', me
 
   const activeModel = model || 'deepseek-ai/DeepSeek-V3.2';
   const circuitDef = await getProjectCircuit(projectId, userId);
+  const resolvedMessage = resolveComponentFollowUp(message, history, circuitDef);
 
   const currentSummary = `Current Automation State for project "${projectId}":
 - Total Parts: ${circuitDef.components?.length || 0}
@@ -363,7 +386,7 @@ export async function handleCircuitChat({ projectId, userId = 'default_user', me
       role: h.role === 'user' ? 'user' : 'assistant',
       content: h.content,
     })),
-    { role: 'user', content: message },
+    { role: 'user', content: resolvedMessage },
   ];
 
   // Run multi-turn agent loop to execute all required tools until completion
