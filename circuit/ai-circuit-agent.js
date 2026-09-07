@@ -32,7 +32,7 @@ const CIRCUIT_TOOLS = [
     type: 'function',
     function: {
       name: 'add_component',
-      description: 'Add a new electronic component to the circuit diagram',
+      description: 'Add a new electronic component or automation module to the workflow and schematic',
       parameters: {
         type: 'object',
         properties: {
@@ -49,7 +49,7 @@ const CIRCUIT_TOOLS = [
     type: 'function',
     function: {
       name: 'connect_pins',
-      description: 'Connect two or more component pins together with a named net/wire',
+      description: 'Connect two or more pins together with a named net or automation signal line',
       parameters: {
         type: 'object',
         properties: {
@@ -68,7 +68,7 @@ const CIRCUIT_TOOLS = [
     type: 'function',
     function: {
       name: 'remove_component',
-      description: 'Remove a component and its associated pin connections from the circuit',
+      description: 'Remove a component and its associated pin connections from the automation workflow',
       parameters: {
         type: 'object',
         properties: {
@@ -82,7 +82,7 @@ const CIRCUIT_TOOLS = [
     type: 'function',
     function: {
       name: 'update_component',
-      description: 'Update the value or label of an existing component',
+      description: 'Update the value or label of an existing component in the automation workflow',
       parameters: {
         type: 'object',
         properties: {
@@ -98,7 +98,7 @@ const CIRCUIT_TOOLS = [
     type: 'function',
     function: {
       name: 'disconnect_pins',
-      description: 'Disconnect a pin node or remove an entire net',
+      description: 'Disconnect a pin node or remove an entire net from the automation workflow',
       parameters: {
         type: 'object',
         properties: {
@@ -110,15 +110,16 @@ const CIRCUIT_TOOLS = [
   },
 ];
 
-const SYSTEM_PROMPT = `You are Chip's expert Hardware Circuit Design AI Agent.
-You help engineers and makers design, wire, and modify ESP32 microcontrollers and embedded electronic circuits.
-You have direct tools to modify the circuit diagram in real time.
+const SYSTEM_PROMPT = `You are Chip's expert Hardware Automation AI Agent for Automation Studio.
+You help engineers and makers design, build, automate, wire, and configure ESP32 microcontrollers, IoT sensors, actuators, and hardware automation workflows.
+You have direct tools to modify the automation workflow and hardware connections in real time.
 
 INTENT DETECTION — Read the user's request carefully before deciding what to do:
-- If the user says "add", "place", "put", "include", "insert" a component → ONLY call add_component. Do NOT wire anything unless explicitly asked.
-- If the user says "wire", "connect", "build the circuit", "connect the pins", "hook up" → call add_component AND connect_pins as needed.
-- If the user says "build" or "create a circuit for [function]" with a specific use case (e.g. "build LED circuit") → add AND wire the complete circuit.
-- Never assume wiring is wanted just because a component was added. Ask the user if they want wiring after adding.
+- If the user says "add", "place", "put", "include", "insert" a component or module → ONLY call add_component. Do NOT wire anything unless explicitly asked.
+- If the user says "wire", "connect", "build the automation", "connect the pins", "hook up" → call add_component AND connect_pins as needed.
+- If the user says "build" or "create an automation for [function]" with a specific use case (e.g. "build LED automation" or "connect DHT22 and relay") → add AND wire the complete hardware setup.
+- When summarizing your actions in your response, ALWAYS use the header "**Automation Summary**" (do NOT use "Circuit Summary").
+- Focus on hardware automation capabilities, pinout triggers, sensors, and actuator controls.
 
 COMPONENT KNOWLEDGE — Use exact part names and libs:
 - ESP32 MCU: ref "U1", lib "RF_Module", part "ESP32-WROOM-32", pins use GPIO names: IO0, IO2, IO4, IO12, IO13, IO14, IO18, IO19, IO21(SDA), IO22(SCL), IO23, IO25, IO26, IO27, IO32, IO33, GND, 3V3.
@@ -137,7 +138,7 @@ WIRING RULES (only apply when user explicitly wants wiring):
 - Pushbutton: U1.GPIO → SW1.1 (net "BTN_SIG"), SW1.2 → U1.GND (net "GND"), add 10kΩ pull-up R from 3V3 → SW1.1.
 - Keep net names UPPERCASE and descriptive: "GND", "3V3", "I2C_SDA", "I2C_SCL", "LED_SIG", "BTN_SIG".
 
-Be clear and concise in your replies. Always tell the user what you added or connected, and offer next steps.`;
+Be clear and concise in your replies. Always tell the user what automation components you added or connected under "**Automation Summary**", and suggest next automation steps (e.g., adding sensors, triggers, or control logic).`;
 
 /**
  * Loads current circuit definition from MongoDB
@@ -350,7 +351,7 @@ export async function handleCircuitChat({ projectId, userId = 'default_user', me
   const activeModel = model || 'deepseek-ai/DeepSeek-V3.2';
   const circuitDef = await getProjectCircuit(projectId, userId);
 
-  const currentSummary = `Current Circuit State for project "${projectId}":
+  const currentSummary = `Current Automation State for project "${projectId}":
 - Total Parts: ${circuitDef.components?.length || 0}
 - Components: ${(circuitDef.components || []).map((c) => `${c.ref} (${c.lib}:${c.name}, val=${c.value})`).join(', ') || 'None'}
 - Connections/Nets: ${(circuitDef.connections || []).map((c) => `${c.net}: [${(c.nodes || []).join(', ')}]`).join('; ') || 'None'}`;
@@ -479,7 +480,7 @@ export async function handleCircuitChat({ projectId, userId = 'default_user', me
     newVersion = await saveProjectCircuit(projectId, userId, circuitDef, descriptions);
   }
 
-  const cleanReply = (finalReply || 'I have completed updating the circuit diagram.')
+  const cleanReply = (finalReply || 'I have completed updating the automation workflow.')
     .replace(/```(?:json)?\s*\[\s*\{[\s\S]*?\}\s*\]\s*```/g, '')
     .trim();
 
