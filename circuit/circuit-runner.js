@@ -51,15 +51,19 @@ function resolvePython() {
   return { cmd: 'python3', args: [] };
 }
 
-function getSymbolDir() {
-  if (process.env.KICAD_SYMBOL_DIR) {
+export async function getSymbolDir() {
+  if (process.env.KICAD_SYMBOL_DIR && !process.env.KICAD_SYMBOL_DIR.startsWith('#')) {
     const custom = resolve(__dirname, '..', process.env.KICAD_SYMBOL_DIR);
     if (existsSync(custom)) return custom;
     if (existsSync(process.env.KICAD_SYMBOL_DIR)) return process.env.KICAD_SYMBOL_DIR;
   }
   const rootDir = resolve(__dirname, '../../kicad-symbols-master');
   if (existsSync(rootDir)) return rootDir;
-  return resolve(__dirname, '../../kicad-symbols-master');
+
+  const tempSymbolDir = join(tmpdir(), 'chip-kicad-symbols');
+  if (existsSync(tempSymbolDir)) return tempSymbolDir;
+
+  return resolve(__dirname, '../libraries');
 }
 
 /**
@@ -67,7 +71,7 @@ function getSymbolDir() {
  */
 export async function checkCircuitEnvironment() {
   const { cmd, args: pyArgs } = resolvePython();
-  const symbolDir = getSymbolDir();
+  const symbolDir = await getSymbolDir();
   const env = {
     ...process.env,
     KICAD_SYMBOL_DIR: symbolDir,
@@ -113,9 +117,7 @@ export async function checkCircuitEnvironment() {
  */
 export async function testPartLoad(lib = 'R', part = 'R') {
   const { cmd, args: pyArgs } = resolvePython();
-  const symdir = lib.endsWith('.kicad_symdir') ? lib : `${lib}.kicad_symdir`;
-  const symfile = part.endsWith('.kicad_sym') ? part : `${part}.kicad_sym`;
-  const symbolDir = getSymbolDir();
+  const symbolDir = await getSymbolDir();
   const env = {
     ...process.env,
     KICAD_SYMBOL_DIR: symbolDir,
@@ -181,7 +183,7 @@ export async function testPartLoad(lib = 'R', part = 'R') {
  */
 export async function searchKiCadSymbols(query = '') {
   const { cmd, args: pyArgs } = resolvePython();
-  const symbolDir = getSymbolDir();
+  const symbolDir = await getSymbolDir();
   const env = {
     ...process.env,
     KICAD_SYMBOL_DIR: symbolDir,
@@ -226,9 +228,7 @@ export async function searchKiCadSymbols(query = '') {
  */
 export async function getComponentDetails(lib = 'R', part = 'R') {
   const { cmd, args: pyArgs } = resolvePython();
-  const symdir = lib.endsWith('.kicad_symdir') ? lib : `${lib}.kicad_symdir`;
-  const symfile = part.endsWith('.kicad_sym') ? part : `${part}.kicad_sym`;
-  const symbolDir = getSymbolDir();
+  const symbolDir = await getSymbolDir();
   const env = {
     ...process.env,
     KICAD_SYMBOL_DIR: symbolDir,
@@ -271,7 +271,7 @@ export async function getComponentDetails(lib = 'R', part = 'R') {
  */
 export async function buildLedCircuit() {
   const { cmd, args: pyArgs } = resolvePython();
-  const symbolDir = getSymbolDir();
+  const symbolDir = await getSymbolDir();
   const env = {
     ...process.env,
     KICAD_SYMBOL_DIR: symbolDir,
@@ -325,7 +325,7 @@ export async function buildLedCircuit() {
  */
 export async function generateProjectCircuit({ projectId, outDir, version = 1, resistorValue = '220' }) {
   const { cmd, args: pyArgs } = resolvePython();
-  const symbolDir = getSymbolDir();
+  const symbolDir = await getSymbolDir();
   const env = {
     ...process.env,
     KICAD_SYMBOL_DIR: symbolDir,
@@ -391,7 +391,7 @@ export async function generateProjectCircuit({ projectId, outDir, version = 1, r
  */
 export async function generateProjectCircuitFromDefinition({ projectId, outDir, version = 1, definitionPath }) {
   const { cmd, args: pyArgs } = resolvePython();
-  const symbolDir = getSymbolDir();
+  const symbolDir = await getSymbolDir();
   const env = {
     ...process.env,
     KICAD_SYMBOL_DIR: symbolDir,

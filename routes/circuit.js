@@ -10,6 +10,7 @@ import {
   searchKiCadSymbols,
   getComponentDetails,
 } from '../circuit/index.js';
+import { handleCircuitChat, SUPPORTED_MODELS } from '../circuit/ai-circuit-agent.js';
 import { getDb, isDbConnected } from '../services/storage.js';
 
 const router = Router();
@@ -208,14 +209,15 @@ router.get('/api/circuit/test', async (req, res, next) => {
     const lib  = String(req.query.lib  || 'R');
     const part = String(req.query.part || 'R');
     const result = await testPartLoad(lib, part);
-    res.status(result.success ? 200 : 500).json({
-      status: result.success ? 'ok' : 'error',
+    const ok = Boolean(result.success || result.componentLoaded);
+    res.status(ok ? 200 : 500).json({
+      status: ok ? 'ok' : 'error',
       lib,
       part,
-      componentLoaded: result.success,
-      pinCount: result.pinCount,
-      pins: result.pins,
-      error: result.error,
+      componentLoaded: ok,
+      pinCount: result.pinCount || result.pins?.length || 0,
+      pins: result.pins || [],
+      error: result.error || null,
     });
   } catch (err) { next(err); }
 });
@@ -376,7 +378,7 @@ router.get('/api/projects/:projectId', async (req, res, next) => {
     let dbProject = null;
     if (isDbConnected()) {
       const db = getDb();
-      dbProject = await db.collection('projects').findOne({ id: projectId }).catch(() => null);
+      dbProject = await db.collection('projects').findOne({ $or: [{ id: projectId }, { projectId }] }).catch(() => null);
     }
 
     const curVer = await getCurrentVersion(projectId, uid);
@@ -391,6 +393,39 @@ router.get('/api/projects/:projectId', async (req, res, next) => {
       hasCircuit: curVer > 0,
       updatedAt: dbProject?.updatedAt || null,
     });
+  } catch (err) { next(err); }
+});
+
+/**
+ * DELETE /api/projects
+ * Delete all projects and all circuit versions for the user from MongoDB.
+ */
+router.delete('/api/projects', async (req, res, next) => {
+  try {
+    const uid = getUserId(req);
+
+    if (isDbConnected()) {
+      const db = getDb();
+      const filter = uid !== 'default_user' ? { userId: uid } : {};
+
+      const userProjects = await db.collection('projects')
+        .find(filter, { projection: { id: 1, projectId: 1 } })
+        .toArray()
+        .catch(() => []);
+      const projectIds = userProjects.map((p) => p.id || p.projectId).filter(Boolean);
+
+      const versionFilter = projectIds.length > 0
+        ? { projectId: { $in: projectIds } }
+        : (uid !== 'default_user' ? { userId: uid } : {});
+
+      await Promise.all([
+        db.collection('projects').deleteMany(filter),
+        db.collection('circuit_versions').deleteMany(versionFilter),
+        db.collection('circuits').deleteMany(versionFilter),
+      ]);
+    }
+
+    res.json({ success: true, message: 'All projects deleted.' });
   } catch (err) { next(err); }
 });
 
@@ -410,7 +445,7 @@ router.delete('/api/projects/:projectId', async (req, res, next) => {
     if (isDbConnected()) {
       const db = getDb();
       await Promise.all([
-        db.collection('projects').deleteMany({ id: projectId }),
+        db.collection('projects').deleteMany({ $or: [{ id: projectId }, { projectId }] }),
         db.collection('circuit_versions').deleteMany({ projectId }),
         db.collection('circuits').deleteMany({ projectId }),
       ]);
@@ -1038,6 +1073,48 @@ router.post('/api/projects/:projectId/circuit/connections/disconnect', async (re
     const result = await compileAndSaveNewVersion(projectId, uid, nextVersion, definition);
     res.json({ success: result.success, version: nextVersion, connections: definition.connections });
   } catch (err) { next(err); }
+});
+
+/**
+ * GET /api/circuit/models
+ * List supported Featherless models for circuit automation.
+ */
+router.get('/api/circuit/models', (req, res) => {
+  res.json({ models: SUPPORTED_MODELS });
+});
+
+/**
+ * POST /api/circuit/chat
+ * AI circuit chat & automation endpoint powered by Featherless.
+ */
+router.post('/api/circuit/chat', async (req, res, next) => {
+  try {
+    const uid = getUserId(req);
+    const { projectId, message, history, model } = req.body || {};
+
+    if (!message || typeof message !== 'string' || !message.trim()) {
+      return res.status(400).json({ error: 'Message is required.' });
+    }
+
+    if (!projectId) {
+      return res.status(400).json({ error: 'ProjectId is required.' });
+    }
+
+    const result = await handleCircuitChat({
+      projectId,
+      userId: uid,
+      message: message.trim(),
+      history: Array.isArray(history) ? history : [],
+      model,
+    });
+
+    res.json({ success: true, ...result });
+  } catch (err) {
+    console.error('[AI Circuit Chat Error]:', err);
+    res.status(err.status || 500).json({
+      error: err.message || 'Failed to process AI circuit chat request.',
+    });
+  }
 });
 
 export default router;
