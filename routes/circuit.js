@@ -567,10 +567,10 @@ router.post('/api/projects/:projectId/circuit/generate', async (req, res, next) 
 });
 
 /**
- * GET /api/projects/:projectId/circuit
- * Get the current active circuit definition from MongoDB.
+ * GET /api/projects/:projectId/automation & GET /api/projects/:projectId/circuit
+ * Get the current active automation definition from MongoDB.
  */
-router.get('/api/projects/:projectId/circuit', async (req, res, next) => {
+router.get(['/api/projects/:projectId/automation', '/api/projects/:projectId/circuit'], async (req, res, next) => {
   try {
     const { projectId } = req.params;
     if (!projectId || !/^[a-zA-Z0-9_-]+$/.test(projectId)) {
@@ -591,7 +591,7 @@ router.get('/api/projects/:projectId/circuit', async (req, res, next) => {
     if (!doc) {
       return res.status(404).json({
         projectId,
-        error: 'No circuit versions found for this project.',
+        error: 'No automation versions found for this project.',
       });
     }
 
@@ -606,10 +606,10 @@ router.get('/api/projects/:projectId/circuit', async (req, res, next) => {
 });
 
 /**
- * GET /api/projects/:projectId/circuit/versions
- * List all circuit versions from MongoDB.
+ * GET /api/projects/:projectId/automation/versions & GET /api/projects/:projectId/circuit/versions
+ * List all automation versions from MongoDB.
  */
-router.get('/api/projects/:projectId/circuit/versions', async (req, res, next) => {
+router.get(['/api/projects/:projectId/automation/versions', '/api/projects/:projectId/circuit/versions'], async (req, res, next) => {
   try {
     const { projectId } = req.params;
     if (!projectId || !/^[a-zA-Z0-9_-]+$/.test(projectId)) {
@@ -1076,18 +1076,18 @@ router.post('/api/projects/:projectId/circuit/connections/disconnect', async (re
 });
 
 /**
- * GET /api/circuit/models
- * List supported Featherless models for circuit automation.
+ * GET /api/automation/models & GET /api/circuit/models
+ * List supported Featherless models for automation studio.
  */
-router.get('/api/circuit/models', (req, res) => {
+router.get(['/api/automation/models', '/api/circuit/models'], (req, res) => {
   res.json({ models: SUPPORTED_MODELS });
 });
 
 /**
- * POST /api/circuit/chat
- * AI circuit chat & automation endpoint powered by Featherless.
+ * POST /api/automation/chat & POST /api/circuit/chat
+ * AI automation chat endpoint powered by Featherless.
  */
-router.post('/api/circuit/chat', async (req, res, next) => {
+router.post(['/api/automation/chat', '/api/circuit/chat'], async (req, res, next) => {
   try {
     const uid = getUserId(req);
     const { projectId, message, history, model } = req.body || {};
@@ -1110,9 +1110,9 @@ router.post('/api/circuit/chat', async (req, res, next) => {
 
     res.json({ success: true, ...result });
   } catch (err) {
-    console.error('[AI Circuit Chat Error]:', err);
+    console.error('[AI Automation Chat Error]:', err);
     res.status(err.status || 500).json({
-      error: err.message || 'Failed to process AI circuit chat request.',
+      error: err.message || 'Failed to process AI automation chat request.',
     });
   }
 });
