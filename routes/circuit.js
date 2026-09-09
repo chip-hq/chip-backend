@@ -1,7 +1,6 @@
 import { Router } from 'express';
 import { rm } from 'fs/promises';
 import { join } from 'path';
-import { randomUUID } from 'crypto';
 import {
   checkCircuitEnvironment,
   testPartLoad,
@@ -12,7 +11,7 @@ import {
   getComponentDetails,
 } from '../circuit/index.js';
 import { handleCircuitChat, SUPPORTED_MODELS } from '../circuit/ai-circuit-agent.js';
-import { getDb, isDbConnected, listAgentChats, saveAgentChat, deleteAgentChat } from '../services/storage.js';
+import { getDb, isDbConnected } from '../services/storage.js';
 
 const router = Router();
 
@@ -284,67 +283,6 @@ router.get('/api/circuit/libraries/pins', async (req, res, next) => {
 });
 
 // ── Project Endpoints ────────────────────────────────────────────────────────
-
-/**
- * GET /api/circuit/chats
- * List recent Agent Studio chats for the authenticated user and project.
- */
-router.get('/api/circuit/chats', async (req, res, next) => {
-  try {
-    const projectId = String(req.query.projectId || '').trim();
-    if (!projectId) return res.status(400).json({ error: 'ProjectId is required.' });
-
-    const chats = await listAgentChats(getUserId(req), projectId);
-    res.json({ chats });
-  } catch (err) { next(err); }
-});
-
-/**
- * POST /api/circuit/chats
- * Create or update an Agent Studio chat transcript.
- */
-router.post('/api/circuit/chats', async (req, res, next) => {
-  try {
-    const { projectId, chatId, title, messages } = req.body || {};
-    if (!projectId || typeof projectId !== 'string') {
-      return res.status(400).json({ error: 'ProjectId is required.' });
-    }
-    if (!Array.isArray(messages)) {
-      return res.status(400).json({ error: 'Messages must be an array.' });
-    }
-
-    const cleanMessages = messages.slice(-200).map((message) => ({
-      id: String(message?.id || randomUUID()),
-      role: message?.role === 'user' ? 'user' : 'assistant',
-      content: String(message?.content || '').slice(0, 12000),
-      actions: Array.isArray(message?.actions) ? message.actions.slice(0, 20) : [],
-      timestamp: message?.timestamp || new Date().toISOString(),
-    }));
-    const cleanTitle = String(title || cleanMessages.find((message) => message.role === 'user')?.content || 'New Chat')
-      .replace(/\s+/g, ' ')
-      .trim()
-      .slice(0, 80) || 'New Chat';
-    const chat = await saveAgentChat({
-      chatId: typeof chatId === 'string' && chatId ? chatId : randomUUID(),
-      projectId: projectId.trim(),
-      userId: getUserId(req),
-      title: cleanTitle,
-      messages: cleanMessages,
-    });
-    res.status(chatId ? 200 : 201).json({ success: true, chat });
-  } catch (err) { next(err); }
-});
-
-/**
- * DELETE /api/circuit/chats/:chatId
- * Delete one Agent Studio chat owned by the authenticated user.
- */
-router.delete('/api/circuit/chats/:chatId', async (req, res, next) => {
-  try {
-    await deleteAgentChat(req.params.chatId, getUserId(req));
-    res.json({ success: true });
-  } catch (err) { next(err); }
-});
 
 /**
  * GET /api/projects
