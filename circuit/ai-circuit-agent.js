@@ -8,7 +8,6 @@ import { getDb, isDbConnected } from '../services/storage.js';
 import { createJob, updateJob } from '../services/storage.js';
 import { compileFirmware, librariesForComponents } from '../services/platformio-runner.js';
 import { generateAutomationFirmware } from './automation-firmware.js';
-import { deviceSockets } from '../services/websocket.js';
 
 const FEATHERLESS_BASE_URL = 'https://api.featherless.ai/v1';
 
@@ -36,12 +35,11 @@ const CIRCUIT_TOOLS = [
     type: 'function',
     function: {
       name: 'compile_automation',
-      description: 'Generate Arduino firmware from the current automation flow and compile it for an ESP32 using the same PlatformIO pipeline as MCP compile_firmware. Use only when the user explicitly asks to generate, compile, program, or flash the automation to the board.',
+      description: 'Generate Arduino firmware from the current automation flow and compile it for an ESP32 using the same PlatformIO pipeline as MCP compile_firmware. This tool only compiles firmware; it never flashes the board.',
       parameters: {
         type: 'object',
         properties: {
           board: { type: 'string', description: 'ESP32 board slug, usually esp32 or esp32dev' },
-                  flash: { type: 'boolean', description: 'Set true only when the user explicitly asks to flash or program the connected ESP32.' },
         },
       },
     },
@@ -139,7 +137,7 @@ INTENT DETECTION — Read the user's request carefully before deciding what to d
 - If the user asks to add, remove, delete, change, update, replace, or rewire a component, inspect the current project summary and use the appropriate add_component, remove_component, update_component, connect_pins, or disconnect_pins tools. Never create a second duplicate when the requested component already exists.
 - If you asked which component to remove and the user replies with only a part name or value, such as "the AMS1117", match it against the current component list and immediately call remove_component for that matching reference.
 - If the user asks to generate code or compile the current automation, call compile_automation with flash false.
-- If the user explicitly asks to flash, program, upload, or send it to the ESP32, call compile_automation with flash true after any requested circuit edits are complete. This compiles the saved flow and immediately relays it to the connected ESP32 browser session.
+- The AI agent cannot flash, program, upload, or send firmware to the ESP32. Never claim that firmware was flashed. If asked to flash, explain that the firmware can be compiled here but must be flashed manually from the dashboard.
 - When summarizing your actions, use the short header "**Automation Summary**" (do NOT use "Circuit Summary").
 - Keep replies to a maximum of 3 short sentences or 3 concise bullets. Mention only what the user asked for and what was actually changed.
 - Do not suggest next steps, optional components, enhancements, RTC modules, sensors, displays, power parts, or follow-up ideas unless the user explicitly asks for recommendations.
@@ -184,7 +182,7 @@ function resolveComponentFollowUp(message, history, circuitDef) {
     : message;
 }
 
-async function compileAutomation(definition, userId, board = 'esp32', flash = false) {
+async function compileAutomation(definition, userId, board = 'esp32') {
   const jobId = `compile_automation_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
   const source = generateAutomationFirmware(definition);
   const components = (definition.components || []).map((component) => `${component.name || component.value || component.ref}`);
@@ -220,30 +218,7 @@ async function compileAutomation(definition, userId, board = 'esp32', flash = fa
       sourceCode: source,
       logLine: `Done — ${result.binSize} bytes`,
     });
-    if (!flash) return { jobId, status: 'done', binSize: result.binSize, source, libraries: result.libraries || [] };
-
-      const activeSocket = Array.from(deviceSockets.values()).find((socket) => socket.readyState === 1);
-      if (!activeSocket) throw new Error('No ESP32 browser connection is active. Connect the board in the dashboard, then try flashing again.');
-
-      const flashJobId = `flash_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-      createJob({
-        jobId: flashJobId,
-        userId,
-        phase: 'flash',
-        status: 'started',
-        progress: 0,
-        filename: `firmware_${board}.bin`,
-        offset: result.offset || '0x0',
-        log: ['Automation firmware is being sent to the connected ESP32…'],
-      });
-      activeSocket.send(JSON.stringify({
-        type: 'flash_payload',
-        jobId: flashJobId,
-        filename: `firmware_${board}.bin`,
-        offset: result.offset || '0x0',
-        binBase64: result.binBase64,
-      }));
-      return { jobId, flashJobId, status: 'started', binSize: result.binSize, source, libraries: result.libraries || [] };
+    return { jobId, status: 'done', binSize: result.binSize, source, libraries: result.libraries || [] };
   } catch (error) {
     updateJob(jobId, { status: 'error', error: error.message, logLine: `Error: ${error.message}` });
     throw new Error(`Automation compilation failed: ${error.message}`);
@@ -462,28 +437,6 @@ export async function handleCircuitChat({ projectId, userId = 'default_user', me
   const circuitDef = await getProjectCircuit(projectId, userId);
   const resolvedMessage = resolveComponentFollowUp(message, history, circuitDef);
 
-  const explicitFlashRequest = /\b(flash|program|upload|send|write)\b/i.test(message) &&
-    /\b(esp32|board|firmware|automation)\b/i.test(message);
-  if (explicitFlashRequest) {
-    const compileResult = await compileAutomation(circuitDef, userId, 'esp32', true);
-    return {
-      reply: 'Firmware compiled and flashing to the connected ESP32.',
-      actions: [{
-        tool: 'compile_automation',
-        args: { board: 'esp32', flash: true },
-        description: `Started ESP32 flash job ${compileResult.flashJobId}.`,
-      }],
-      newVersion: circuitDef.version || 0,
-      model: activeModel,
-      circuit: {
-        projectId,
-        version: circuitDef.version || 0,
-        components: circuitDef.components || [],
-        connections: circuitDef.connections || [],
-      },
-    };
-  }
-
   const currentSummary = `Current Automation State for project "${projectId}":
 - Total Parts: ${circuitDef.components?.length || 0}
 - Components: ${(circuitDef.components || []).map((c) => `${c.ref} (${c.lib}:${c.name}, val=${c.value})`).join(', ') || 'None'}
@@ -561,13 +514,9 @@ export async function handleCircuitChat({ projectId, userId = 'default_user', me
 
         let actionDesc = applyCircuitTool(circuitDef, fnName, fnArgs);
         if (fnName === 'compile_automation') {
-          const compileResult = await compileAutomation(circuitDef, userId, fnArgs.board || 'esp32', fnArgs.flash === true);
-          actionDesc = compileResult.flashJobId
-            ? `Compiled and started flashing automation firmware to the ESP32. Flash job ${compileResult.flashJobId}.`
-            : `Compiled automation firmware successfully. Job ${compileResult.jobId} is ready for the existing flash flow.`;
-          finalReply = compileResult.flashJobId
-            ? `${finalReply || ''}\n\nFirmware is compiled and flashing to the connected ESP32.`.trim()
-            : `${finalReply || ''}\n\nFirmware compiled successfully.`.trim();
+          const compileResult = await compileAutomation(circuitDef, userId, fnArgs.board || 'esp32');
+          actionDesc = `Compiled automation firmware successfully. Job ${compileResult.jobId} is ready for the existing flash flow.`;
+          finalReply = `${finalReply || ''}\n\nFirmware compiled successfully. It was not flashed.`.trim();
         }
         if (actionDesc) {
           executedActions.push({ tool: fnName, args: fnArgs, description: actionDesc });

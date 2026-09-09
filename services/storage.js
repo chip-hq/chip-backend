@@ -5,6 +5,7 @@ const memDevices = new Map();
 const memJobs = new Map();
 const memAgents = new Map();
 const memPreferences = new Map(); // userId -> { webCompanion: boolean }
+const memAgentChats = new Map();
 
 let client = null;
 let db = null;
@@ -76,6 +77,8 @@ export async function initStorage() {
       db.collection('agents').createIndex({ userId: 1, clientKey: 1 }, { unique: true }),
       db.collection('agents').createIndex({ userId: 1 }),
       db.collection('preferences').createIndex({ userId: 1 }, { unique: true }),
+      db.collection('agent_chats').createIndex({ userId: 1, projectId: 1, updatedAt: -1 }),
+      db.collection('agent_chats').createIndex({ chatId: 1 }, { unique: true }),
       db.collection('oauth_sessions').createIndex({ sessionId: 1 }, { unique: true }),
       db.collection('oauth_sessions').createIndex({ createdAt: 1 }, { expireAfterSeconds: 1800 }),
       db.collection('oauth_codes').createIndex({ code: 1 }, { unique: true }),
@@ -289,6 +292,65 @@ export async function clearJobs(userId = null) {
       await db.collection('jobs').deleteMany(filter);
     } catch (err) {
       warn('clearJobs', err);
+    }
+  }
+}
+
+// ── Agent Studio Chats ──────────────────────────────────────────────────────
+
+export async function listAgentChats(userId, projectId = null) {
+  const filter = { userId };
+  if (projectId) filter.projectId = projectId;
+
+  if (canUseMongo()) {
+    try {
+      return await db.collection('agent_chats')
+        .find(filter, SAFE)
+        .sort({ updatedAt: -1 })
+        .limit(50)
+        .toArray();
+    } catch (err) {
+      warn('listAgentChats', err);
+    }
+  }
+
+  return Array.from(memAgentChats.values())
+    .filter((chat) => chat.userId === userId && (!projectId || chat.projectId === projectId))
+    .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
+    .slice(0, 50);
+}
+
+export async function saveAgentChat(chat) {
+  const now = new Date();
+  const existing = memAgentChats.get(chat.chatId);
+  if (existing && existing.userId !== chat.userId) {
+    throw new Error('Agent chat is not owned by this user.');
+  }
+  const doc = {
+    ...existing,
+    ...chat,
+    messages: Array.isArray(chat.messages) ? chat.messages : existing?.messages || [],
+    createdAt: existing?.createdAt || chat.createdAt || now,
+    updatedAt: now,
+  };
+  memAgentChats.set(doc.chatId, doc);
+
+  if (canUseMongo()) {
+    await db.collection('agent_chats')
+      .replaceOne({ chatId: doc.chatId, userId: doc.userId }, doc, { upsert: true });
+  }
+  return doc;
+}
+
+export async function deleteAgentChat(chatId, userId) {
+  const chat = memAgentChats.get(chatId);
+  if (chat?.userId === userId) memAgentChats.delete(chatId);
+
+  if (canUseMongo()) {
+    try {
+      await db.collection('agent_chats').deleteOne({ chatId, userId });
+    } catch (err) {
+      warn('deleteAgentChat', err);
     }
   }
 }
