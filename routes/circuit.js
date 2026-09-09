@@ -440,7 +440,10 @@ router.get('/api/projects/:projectId', async (req, res, next) => {
     let dbProject = null;
     if (isDbConnected()) {
       const db = getDb();
-      dbProject = await db.collection('projects').findOne({ $or: [{ id: projectId }, { projectId }] }).catch(() => null);
+      const ownerFilter = uid !== 'default_user' ? { userId: uid } : {};
+      dbProject = await db.collection('projects')
+        .findOne({ ...ownerFilter, $or: [{ id: projectId }, { projectId }] })
+        .catch(() => null);
     }
 
     const curVer = await getCurrentVersion(projectId, uid);
@@ -506,10 +509,11 @@ router.delete('/api/projects/:projectId', async (req, res, next) => {
 
     if (isDbConnected()) {
       const db = getDb();
+      const ownerFilter = uid !== 'default_user' ? { userId: uid } : {};
       await Promise.all([
-        db.collection('projects').deleteMany({ $or: [{ id: projectId }, { projectId }] }),
-        db.collection('circuit_versions').deleteMany({ projectId }),
-        db.collection('circuits').deleteMany({ projectId }),
+        db.collection('projects').deleteMany({ ...ownerFilter, $or: [{ id: projectId }, { projectId }] }),
+        db.collection('circuit_versions').deleteMany({ projectId, ...ownerFilter }),
+        db.collection('circuits').deleteMany({ projectId, ...ownerFilter }),
       ]);
     }
 
