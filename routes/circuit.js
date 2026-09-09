@@ -19,7 +19,7 @@ const router = Router();
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 function getUserId(req) {
-  return req?.user?.id || req?.headers?.['x-user-id'] || req?.query?.userId || req?.body?.userId || 'default_user';
+  return req?.userId || req?.user?.id || req?.headers?.['x-user-id'] || req?.query?.userId || req?.body?.userId || 'default_user';
 }
 
 /**
