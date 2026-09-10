@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { rm } from 'fs/promises';
 import { join } from 'path';
+import { randomUUID } from 'crypto';
 import {
   checkCircuitEnvironment,
   testPartLoad,
@@ -11,7 +12,7 @@ import {
   getComponentDetails,
 } from '../circuit/index.js';
 import { handleCircuitChat, SUPPORTED_MODELS } from '../circuit/ai-circuit-agent.js';
-import { getDb, isDbConnected } from '../services/storage.js';
+import { getDb, isDbConnected, listAgentChats, saveAgentChat, deleteAgentChat } from '../services/storage.js';
 
 const router = Router();
 
@@ -283,6 +284,36 @@ router.get('/api/circuit/libraries/pins', async (req, res, next) => {
 });
 
 // ── Project Endpoints ────────────────────────────────────────────────────────
+
+router.get('/api/circuit/chats', async (req, res, next) => {
+  try {
+    const projectId = String(req.query.projectId || '').trim();
+    if (!projectId) return res.status(400).json({ error: 'ProjectId is required.' });
+    res.json({ chats: await listAgentChats(getUserId(req), projectId) });
+  } catch (err) { next(err); }
+});
+
+router.post('/api/circuit/chats', async (req, res, next) => {
+  try {
+    const { projectId, chatId, title, messages } = req.body || {};
+    if (!projectId || !Array.isArray(messages)) return res.status(400).json({ error: 'ProjectId and messages are required.' });
+    const chat = await saveAgentChat({
+      chatId: chatId || randomUUID(),
+      projectId: projectId.trim(),
+      userId: getUserId(req),
+      title: String(title || 'New Chat').slice(0, 80),
+      messages: messages.slice(-200),
+    });
+    res.json({ success: true, chat });
+  } catch (err) { next(err); }
+});
+
+router.delete('/api/circuit/chats/:chatId', async (req, res, next) => {
+  try {
+    await deleteAgentChat(req.params.chatId, getUserId(req));
+    res.json({ success: true });
+  } catch (err) { next(err); }
+});
 
 /**
  * GET /api/projects
