@@ -22,8 +22,8 @@
  *   #define CHIP_DEVICE_TOKEN "..."   // from POST /api/devices/claim (once)
  *   #define CHIP_FIRMWARE_VERSION "1.0.0"
  *   #include "chip_agent.h"
- *   void setup() { /* ... */ chipAgentBegin(); }
- *   void loop()  { /* ... */ chipAgentLoop(); }
+ *   void setup() { ... chipAgentBegin(); }
+ *   void loop()  { ... chipAgentLoop(); }
  *
  * Libraries (auto-resolved by components: ["chip-agent"]):
  *   links2004/WebSockets, bblanchon/ArduinoJson   (Update/WiFi/HTTPClient/esp_ota = core)
