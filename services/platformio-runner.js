@@ -4,7 +4,6 @@ import { constants, existsSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 import { fileURLToPath } from 'url';
-import { persistOtaArtifact } from './ota-store.js';
 import {
   inferLibrariesFromSource,
   librariesForComponents,
@@ -522,21 +521,6 @@ export async function compileFirmware({
     const binBase64 = finalBuf.toString('base64');
     const durationMs = Date.now() - startMs;
 
-    // OTA only exists on ESP32: persist the app-only image (not the merged
-    // USB image) so POST /api/ota/publish can ship this exact build.
-    let otaSha256 = null;
-    let otaSize = 0;
-    if (platform.ota) {
-      try {
-        const ota = await persistOtaArtifact(jobId, firmwareBuf);
-        otaSha256 = ota.sha256;
-        otaSize = ota.size;
-        emit(`[COMPILE] OTA artifact ready — sha256 ${otaSha256.slice(0, 12)}… (${otaSize} bytes)`);
-      } catch (err) {
-        emit(`[COMPILE] Warning: OTA artifact not persisted (${err.message}); publish by raw binBase64 instead.`);
-      }
-    }
-
     emit(`[COMPILE] Done — ${finalBuf.length} bytes in ${(durationMs / 1000).toFixed(1)}s`);
 
     return {
@@ -549,8 +533,6 @@ export async function compileFirmware({
       durationMs,
       log,
       libraries: resolvedLibs,
-      otaSha256,
-      otaSize,
     };
   } finally {
     // Drop ephemeral per-job tree; keep shared library cache for reuse

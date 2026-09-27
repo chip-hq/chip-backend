@@ -17,14 +17,10 @@ import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
 import oauthRouter, { verifyJWT } from './routes/oauth.js';
 import { setupWebSocket, deviceSockets } from './services/websocket.js';
 
-import devicesRouter from './routes/devices.js';
 import jobsRouter from './routes/jobs.js';
 import compileRouter from './routes/compile.js';
 import flashRouter from './routes/flash.js';
 import preferencesRouter from './routes/preferences.js';
-import otaRouter from './routes/ota.js';
-import groupsRouter from './routes/groups.js';
-import agentRouter from './routes/agent.js';
 import platformsRouter from './routes/platforms.js';
 import codeRouter from './routes/code.js';
 
@@ -117,7 +113,6 @@ app.get('/health', (req, res) => {
   });
 });
 
-app.use(devicesRouter);
 app.use(jobsRouter);
 app.use('/api/compile', compileLimiter);
 app.use(compileRouter);
@@ -125,9 +120,6 @@ app.use('/api/flash', flashLimiter);
 app.use(flashRouter);
 app.use('/api/preferences', generalApiLimiter);
 app.use(preferencesRouter);
-app.use(otaRouter);
-app.use(groupsRouter);
-app.use(agentRouter);
 app.use(platformsRouter);
 app.use(codeRouter);
 
@@ -161,4 +153,3 @@ process.on('unhandledRejection', (reason) => {
   console.error('[FATAL] Unhandled promise rejection:', reason);
   process.exit(1);
 });
-

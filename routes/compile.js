@@ -115,7 +115,6 @@ router.post('/api/compile/recompile', asyncRoute(async (req, res) => {
       platform: result.platformId || platformId, artifact: result.artifact || 'bin',
       sourceCode: source, libraries: resolvedLibs,
       webCompanion: typeof webCompanion === 'string' ? webCompanion : null,
-      otaSha256: result.otaSha256, otaSize: result.otaSize,
       logLine: `Done — ${result.binSize} bytes in ${(result.durationMs / 1000).toFixed(1)}s`,
     });
 
@@ -129,8 +128,7 @@ router.post('/api/compile/recompile', asyncRoute(async (req, res) => {
       filename: result.filename || `firmware_${targetBoard}.bin`,
       artifact: result.artifact || 'bin', platform: result.platformId || platformId,
       board: targetBoard, durationMs: result.durationMs, libraries: resolvedLibs,
-      log: result.log, otaAvailable: !!result.otaSha256,
-      otaSha256: result.otaSha256, otaSize: result.otaSize,
+      log: result.log,
       ...(agentWarning ? { agentWarning } : {}),
     });
   } catch (err) {
@@ -281,8 +279,6 @@ router.post('/api/compile', asyncRoute(async (req, res) => {
       sourceCode: source,
       libraries: resolvedLibs,
       webCompanion: typeof webCompanion === 'string' ? webCompanion : null,
-      otaSha256: result.otaSha256,
-      otaSize: result.otaSize,
       logLine: `Done — ${result.binSize} bytes in ${(result.durationMs / 1000).toFixed(1)}s`,
     });
 
@@ -308,9 +304,6 @@ router.post('/api/compile', asyncRoute(async (req, res) => {
       durationMs: result.durationMs,
       libraries: resolvedLibs,
       log: result.log,
-      otaAvailable: !!result.otaSha256,
-      otaSha256: result.otaSha256,
-      otaSize: result.otaSize,
       ...(agentWarning ? { agentWarning } : {}),
     });
   } catch (err) {
