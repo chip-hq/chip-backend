@@ -244,6 +244,17 @@ export async function getDevice(deviceId) {
   return null;
 }
 
+export async function deleteDevice(deviceId) {
+  memDevices.delete(deviceId);
+  if (canUseMongo()) {
+    try {
+      await db.collection('devices').deleteOne({ deviceId });
+    } catch (err) {
+      warn('deleteDevice', err);
+    }
+  }
+}
+
 // ── Jobs ─────────────────────────────────────────────────────────────────────
 
 const jobWriteChains = new Map();

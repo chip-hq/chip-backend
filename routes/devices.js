@@ -6,6 +6,7 @@ import {
   recordAgentConnection,
   disconnectAgent,
   getDevice,
+  deleteDevice,
   getPreference,
   claimDevice,
   getTelemetry,
@@ -170,6 +171,19 @@ router.post('/api/devices/:deviceId/cmd', asyncRoute(async (req, res) => {
     });
   }
   res.json({ delivered: true, route: 'wifi', deviceId, cmdId, command });
+}));
+
+/** Remove a board registration (offline stale entries). Tokens baked into old firmware stop working. */
+router.delete('/api/devices/:deviceId', asyncRoute(async (req, res) => {
+  const deviceId = String(req.params.deviceId);
+  const requester = await resolveUserId(req);
+  const existing = await getDevice(deviceId);
+  if (!existing) return res.status(404).json({ error: `Device "${deviceId}" not found.` });
+  if (existing.userId && requester !== 'anonymous' && String(existing.userId) !== String(requester)) {
+    return res.status(403).json({ error: 'Device belongs to a different user.' });
+  }
+  await deleteDevice(deviceId);
+  res.json({ ok: true, deviceId });
 }));
 
 /** Recent telemetry points for a board, newest first. */
