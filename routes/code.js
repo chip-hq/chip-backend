@@ -164,7 +164,7 @@ router.get('/api/jobs/:jobId/pipeline', asyncRoute(async (req, res) => {
     },
     {
       id: 'flashed', label: 'Flashed', state: flashDone ? 'done' : flashActive ? 'active' : flashError ? 'error' : 'pending',
-      detail: flashDone ? 'on the board' : flashActive ? 'writing…' : flashError ? 'flash failed — see job log' : 'after approval',
+      detail: flashDone ? 'on the board' : flashActive ? 'writing…' : flashError ? 'flash failed — see job log' : 'compile auto-flashes — check dashboard',
     },
   ];
 
