@@ -115,7 +115,7 @@ bool configured() {
   return String(CHIP_SERVER_HOST).length() > 0 && String(CHIP_DEVICE_TOKEN).length() > 0;
 }
 
-void sendJson(const String &payload) {
+void sendJson(String payload) {
   if (wsConnected) ws.sendTXT(payload);
 }
 
