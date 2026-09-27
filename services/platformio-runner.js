@@ -3,18 +3,13 @@ import { writeFile, readFile, access, mkdir, rm } from 'fs/promises';
 import { constants, existsSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
+import { fileURLToPath } from 'url';
+import { persistOtaArtifact } from './ota-store.js';
 import {
   inferLibrariesFromSource,
   librariesForComponents,
 } from './hardware-components.js';
-
-const BOARD_MAP = {
-  esp32: 'esp32dev',
-  esp32dev: 'esp32dev',
-  esp32s2: 'esp32-s2-saola-1',
-  esp32s3: 'esp32-s3-devkitm-1',
-  esp32c3: 'esp32-c3-devkitm-1',
-};
+import { resolveBoard } from './platforms.js';
 
 const MAX_LIBRARIES = 25;
 
@@ -174,8 +169,29 @@ export function mergeLibraries(explicit = [], inferred = []) {
 
 export { inferLibrariesFromSource, librariesForComponents };
 export { listHardwareComponents, resolveComponents } from './hardware-components.js';
+export { resolveBoard, compilableBoardSlugs, listPlatforms } from './platforms.js';
 
-export function buildIni(boardId, libDeps = []) {
+/**
+ * Every build ships an OTA-capable partition table (dual app slots + otadata)
+ * from the FIRST flash onward — retrofitting later needs a cable re-flash.
+ * 4MB layout fits ESP32/S2/C3; S3 devkits (8MB) get the bigger table.
+ * Offsets keep bootloader@0x1000 / partitions@0x8000 / app@0x10000 so the
+ * merged USB image layout is unchanged.
+ */
+const PARTITION_CLASS = {
+  esp32dev: '4mb',
+  'esp32-s2-saola-1': '4mb',
+  'esp32-c3-devkitm-1': '4mb',
+  'esp32-s3-devkitm-1': '8mb',
+};
+
+export function otaPartitionsCsv(boardId) {
+  const cls = PARTITION_CLASS[boardId] ?? '4mb';
+  const url = new URL(`../firmware/partitions-chip-ota-${cls}.csv`, import.meta.url);
+  return readFile(fileURLToPath(url), 'utf8');
+}
+
+export function buildIni(platform, boardEntry, libDeps = []) {
   const lines = [];
 
   if (libDeps.length > 0) {
@@ -185,11 +201,16 @@ export function buildIni(boardId, libDeps = []) {
   }
 
   lines.push('[env:target]');
-  lines.push('platform = espressif32');
-  lines.push(`board = ${boardId}`);
-  lines.push('framework = arduino');
+  lines.push(`platform = ${platform.pio.platform}`);
+  lines.push(`board = ${boardEntry.pioBoard}`);
+  lines.push(`framework = ${platform.pio.framework}`);
   lines.push('monitor_speed = 115200');
-  lines.push('build_flags = -DCORE_DEBUG_LEVEL=0');
+  // Dual OTA slots are an ESP32-only arrangement — other families use the
+  // board default layout and cannot receive Chip OTA updates.
+  if (platform.ota) {
+    lines.push('board_build.partitions = partitions-chip-ota.csv');
+    lines.push('build_flags = -DCORE_DEBUG_LEVEL=0');
+  }
 
   if (libDeps.length > 0) {
     lines.push('lib_deps =');
@@ -205,6 +226,27 @@ export function buildIni(boardId, libDeps = []) {
 function findBin(projectDir) {
   const standard = join(projectDir, '.pio', 'build', 'target', 'firmware.bin');
   if (existsSync(standard)) return standard;
+  return null;
+}
+
+/**
+ * Collect the flashable artifact for a platform. ESP32 merges bootloader +
+ * partitions + app into one self-booting image; every other family ships
+ * its native file (plain .bin, Intel HEX for AVR, UF2 for RP2040).
+ */
+function findArtifact(projectDir, platform) {
+  const dir = join(projectDir, '.pio', 'build', 'target');
+  const kind = platform.artifact || 'bin';
+  if (kind === 'hex') {
+    const hex = join(dir, 'firmware.hex');
+    if (existsSync(hex)) return { path: hex, artifact: 'hex', filename: 'firmware.hex' };
+  }
+  if (kind === 'uf2') {
+    const uf2 = join(dir, 'firmware.uf2');
+    if (existsSync(uf2)) return { path: uf2, artifact: 'uf2', filename: 'firmware.uf2' };
+  }
+  const bin = findBin(projectDir);
+  if (bin) return { path: bin, artifact: 'bin', filename: 'firmware.bin' };
   return null;
 }
 
@@ -309,8 +351,12 @@ export async function compileFirmware({
   jobId = `job_${Date.now()}`,
   onLog = () => {},
   timeout = 300_000,
+  agentHeader = null,
 } = {}) {
-  const boardId = BOARD_MAP[board.toLowerCase()] ?? 'esp32dev';
+  const resolved = resolveBoard(board) ?? resolveBoard('esp32');
+  const platform = resolved.platform;
+  const boardEntry = resolved.board;
+  const boardId = boardEntry.pioBoard;
   const startMs = Date.now();
   const log = [];
   const explicitLibs = normalizeLibraries(libraries ?? libDeps);
@@ -332,7 +378,8 @@ export async function compileFirmware({
   }
 
   emit(`[COMPILE] Project dir: ${projectDir}`);
-  emit(`[COMPILE] Board: ${boardId}`);
+  emit(`[COMPILE] Platform: ${platform.vendor} ${platform.label} — board: ${boardEntry.label} (${boardId})`);
+  emit(`[COMPILE] Flash package: ${platform.flash?.tool ?? 'n/a'} (${platform.flash?.package ?? 'no flasher yet'})`);
   if (components?.length) {
     emit(`[COMPILE] Components: ${components.join(', ')}`);
   }
@@ -346,10 +393,28 @@ export async function compileFirmware({
     emit('[COMPILE] Libraries: (none — core only)');
   }
 
-  await writeFile(join(projectDir, 'platformio.ini'), buildIni(boardId, resolvedLibs), 'utf8');
+  await writeFile(join(projectDir, 'platformio.ini'), buildIni(platform, boardEntry, resolvedLibs), 'utf8');
+
+  if (platform.ota) {
+    try {
+      await writeFile(join(projectDir, 'partitions-chip-ota.csv'), await otaPartitionsCsv(boardId), 'utf8');
+      emit('[COMPILE] Partition table: chip-ota (dual app slots, OTA-ready)');
+    } catch (err) {
+      emit(`[COMPILE] Warning: OTA partition table unavailable (${err.message}); build uses board default and cannot receive OTA updates.`);
+    }
+  } else {
+    emit(`[COMPILE] No OTA partitions on ${platform.label} — first-flash layout is the board default.`);
+  }
 
   const srcDir = join(projectDir, 'src');
   await mkdir(srcDir, { recursive: true });
+
+  // The Chip Agent realtime/OTA client is ESP32 Arduino code — only link it
+  // on the platform it compiles on.
+  if (platform.id === 'esp32' && typeof agentHeader === 'string' && agentHeader.length > 0) {
+    await writeFile(join(srcDir, 'chip_agent.h'), agentHeader, 'utf8');
+    emit('[COMPILE] Chip Agent header linked (chip_agent.h) — realtime + OTA client available to the sketch.');
+  }
 
   const preparedSource = source.includes('Arduino.h')
     ? source
@@ -412,21 +477,24 @@ export async function compileFirmware({
       }
     });
 
-    const binPath = findBin(projectDir);
-    if (!binPath) {
-      const err = new Error('Compile succeeded but firmware.bin not found in .pio/build/target/');
+    const found = findArtifact(projectDir, platform);
+    if (!found) {
+      const err = new Error(`Compile succeeded but no flashable artifact found (.pio/build/target/ has no ${platform.artifact})`);
       err.log = log;
       throw err;
     }
 
-    const firmwareBuf = await readFile(binPath);
+    const firmwareBuf = await readFile(found.path);
     const bootloaderPath = join(projectDir, '.pio', 'build', 'target', 'bootloader.bin');
     const partitionsPath = join(projectDir, '.pio', 'build', 'target', 'partitions.bin');
 
+    // ESP32 merged image: bootloader + partitions + app, flashed at 0x0.
+    // Every other family flashes its native artifact at its own layout.
     let finalBuf = firmwareBuf;
-    let flashOffset = '0x10000';
+    let flashOffset = platform.id === 'esp32' ? '0x10000' : '0x0';
+    let flashFilename = found.filename;
 
-    if (existsSync(bootloaderPath) && existsSync(partitionsPath)) {
+    if (platform.artifact === 'merged-bin' && existsSync(bootloaderPath) && existsSync(partitionsPath)) {
       try {
         const bootloaderBuf = await readFile(bootloaderPath);
         const partitionsBuf = await readFile(partitionsPath);
@@ -438,14 +506,36 @@ export async function compileFirmware({
 
         finalBuf = mergedBuf;
         flashOffset = '0x0';
+        flashFilename = 'firmware_merged.bin';
         emit(`[COMPILE] Built complete self-booting merged image (${mergedBuf.length} bytes @ 0x0)`);
       } catch (mergeErr) {
         emit(`[COMPILE] Note: Merging bootloader skipped: ${mergeErr.message}`);
       }
+    } else if (platform.artifact === 'hex') {
+      flashFilename = 'firmware.hex';
+      emit(`[COMPILE] Intel HEX artifact ready (${firmwareBuf.length} bytes of HEX) — flash with the ${platform.flash.tool} package.`);
+    } else if (platform.artifact === 'uf2') {
+      flashFilename = 'firmware.uf2';
+      emit(`[COMPILE] UF2 artifact ready (${firmwareBuf.length} bytes) — drop onto the BOOTSEL drive.`);
     }
 
     const binBase64 = finalBuf.toString('base64');
     const durationMs = Date.now() - startMs;
+
+    // OTA only exists on ESP32: persist the app-only image (not the merged
+    // USB image) so POST /api/ota/publish can ship this exact build.
+    let otaSha256 = null;
+    let otaSize = 0;
+    if (platform.ota) {
+      try {
+        const ota = await persistOtaArtifact(jobId, firmwareBuf);
+        otaSha256 = ota.sha256;
+        otaSize = ota.size;
+        emit(`[COMPILE] OTA artifact ready — sha256 ${otaSha256.slice(0, 12)}… (${otaSize} bytes)`);
+      } catch (err) {
+        emit(`[COMPILE] Warning: OTA artifact not persisted (${err.message}); publish by raw binBase64 instead.`);
+      }
+    }
 
     emit(`[COMPILE] Done — ${finalBuf.length} bytes in ${(durationMs / 1000).toFixed(1)}s`);
 
@@ -453,9 +543,14 @@ export async function compileFirmware({
       binBase64,
       binSize: finalBuf.length,
       offset: flashOffset,
+      filename: flashFilename,
+      artifact: found.artifact,
+      platformId: platform.id,
       durationMs,
       log,
       libraries: resolvedLibs,
+      otaSha256,
+      otaSize,
     };
   } finally {
     // Drop ephemeral per-job tree; keep shared library cache for reuse

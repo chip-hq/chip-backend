@@ -117,6 +117,17 @@ export const HARDWARE_COMPONENTS = [
     notes: '',
   },
   {
+    id: 'chip-agent',
+    name: 'Chip Agent realtime + OTA client',
+    aliases: ['chip agent', 'chipagent', 'ota agent', 'telemetry agent', 'wifi agent'],
+    libraries: [
+      'links2004/WebSockets',
+      'bblanchon/ArduinoJson',
+    ],
+    headers: ['WebSocketsClient.h', 'ArduinoJson.h', 'chip_agent.h'],
+    notes: 'Links the Chip Agent (WiFi WebSocket link, telemetry, commands, HTTPS OTA). The sketch must #include "chip_agent.h" (auto-provided at compile) and call chipAgentBegin()/chipAgentLoop(). Without it the board can never be updated OTA.',
+  },
+  {
     id: 'arduino-json',
     name: 'ArduinoJson',
     aliases: ['arduinojson', 'json'],

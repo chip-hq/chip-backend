@@ -29,17 +29,31 @@ router.post('/api/flash', asyncRoute(async (req, res) => {
   let payloadBase64 = typeof rawBase64 === 'string' ? rawBase64 : null;
   let targetOffset = typeof requestedOffset === 'string' ? requestedOffset : null;
   let webCompanion = null;
+  // The dashboard picks its flashing package from these (esptool vs STK500
+  // vs UF2) — they ride along from the compile job that produced the binary.
+  let artifact = 'bin';
+  let platform = null;
+  let jobFilename = null;
+  let jobBoard = null;
 
   if (payloadBase64 && payloadBase64.startsWith('compile_')) {
     const compileJob = await getJob(payloadBase64);
     payloadBase64 = compileJob?.binBase64;
     targetOffset = compileJob?.offset || targetOffset || '0x0';
     webCompanion = compileJob?.webCompanion || null;
+    artifact = compileJob?.artifact || artifact;
+    platform = compileJob?.platform || platform;
+    jobFilename = compileJob?.filename || null;
+    jobBoard = compileJob?.board || null;
   } else if (!payloadBase64 && compileJobId && typeof compileJobId === 'string') {
     const compileJob = await getJob(compileJobId);
     payloadBase64 = compileJob?.binBase64;
     targetOffset = compileJob?.offset || targetOffset || '0x0';
     webCompanion = compileJob?.webCompanion || null;
+    artifact = compileJob?.artifact || artifact;
+    platform = compileJob?.platform || platform;
+    jobFilename = compileJob?.filename || null;
+    jobBoard = compileJob?.board || null;
   }
 
   if (!payloadBase64) {
@@ -86,6 +100,7 @@ router.post('/api/flash', asyncRoute(async (req, res) => {
     jobId: flashJobId,
     userId,
     deviceId: finalTargetId,
+    sourceJobId: typeof compileJobId === 'string' ? compileJobId : (typeof rawBase64 === 'string' && rawBase64.startsWith('compile_') ? rawBase64 : null),
     filename,
     offset,
     status: 'started',
@@ -98,8 +113,11 @@ router.post('/api/flash', asyncRoute(async (req, res) => {
     JSON.stringify({
       type: 'flash_payload',
       jobId: flashJobId,
-      filename,
+      filename: jobFilename || filename,
       offset,
+      artifact,
+      platform,
+      board: jobBoard,
       binBase64: payloadBase64,
       webCompanion: webCompanion || undefined,
     })
@@ -109,7 +127,10 @@ router.post('/api/flash', asyncRoute(async (req, res) => {
     jobId: flashJobId,
     status: 'started',
     offset,
-    message: `Firmware relayed to browser dashboard for ${finalTargetId}`,
+    artifact,
+    platform,
+    board: jobBoard,
+    message: `Firmware relayed to browser dashboard for ${finalTargetId}${platform ? ` (${platform})` : ''}`,
   });
 }));
 

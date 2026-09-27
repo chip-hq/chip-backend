@@ -22,7 +22,11 @@ import jobsRouter from './routes/jobs.js';
 import compileRouter from './routes/compile.js';
 import flashRouter from './routes/flash.js';
 import preferencesRouter from './routes/preferences.js';
-import circuitRouter from './routes/circuit.js';
+import otaRouter from './routes/ota.js';
+import groupsRouter from './routes/groups.js';
+import agentRouter from './routes/agent.js';
+import platformsRouter from './routes/platforms.js';
+import codeRouter from './routes/code.js';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -121,7 +125,11 @@ app.use('/api/flash', flashLimiter);
 app.use(flashRouter);
 app.use('/api/preferences', generalApiLimiter);
 app.use(preferencesRouter);
-app.use(circuitRouter);
+app.use(otaRouter);
+app.use(groupsRouter);
+app.use(agentRouter);
+app.use(platformsRouter);
+app.use(codeRouter);
 
 app.use(notFoundHandler);
 app.use(errorHandler);

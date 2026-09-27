@@ -5,17 +5,36 @@ import { asyncRoute } from '../middleware/errorHandler.js';
 
 const router = Router();
 
+// Heavy blobs (firmware binaries, sources, companions, per-rev text) must
+// never ride the polled list/status endpoints — a single .bin is ~1MB base64
+// and polling it every few seconds is what made the dashboard feel slow.
+// Binaries stay on GET /:jobId/download, source on /:jobId/code.
+const HEAVY_FIELDS = ['binBase64', 'sourceCode', 'webCompanion'];
+function stripHeavy(job, { keepLog = true, logCap = 120 } = {}) {
+  const { revisions, ...rest } = job ?? {};
+  const out = { ...rest };
+  for (const k of HEAVY_FIELDS) delete out[k];
+  if (Array.isArray(revisions)) out.revCount = revisions.length;
+  if (Array.isArray(out.log)) {
+    out.log = keepLog ? out.log.slice(-logCap) : [];
+    if (!keepLog) delete out.log;
+  }
+  return out;
+}
+
 router.get('/api/jobs', asyncRoute(async (req, res) => {
   const targetUserId = await resolveUserId(req);
   const jobs = await listJobs(targetUserId === 'anonymous' ? null : targetUserId);
-  res.json({ jobs });
+  res.json({ jobs: jobs.map((j) => stripHeavy(j, { keepLog: false })) });
 }));
 
 router.get('/api/jobs/:jobId', asyncRoute(async (req, res) => {
   const { jobId } = req.params;
   const job = await getJob(jobId);
   if (!job) return res.status(404).json({ error: 'Job not found' });
-  res.json(job);
+  // Full document only on explicit request (detail pages) — polling stays slim.
+  if (req.query.full === '1') return res.json(job);
+  res.json(stripHeavy(job));
 }));
 
 router.patch('/api/jobs/:jobId/status', asyncRoute(async (req, res) => {
