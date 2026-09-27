@@ -4,7 +4,7 @@ import { join } from 'path';
 import { homedir } from 'os';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
-import { createJob, updateJob, recordAgentConnection, getPreference } from '../services/storage.js';
+import { createJob, updateJob, recordAgentConnection, getPreference, getJob, appendCodeRevision } from '../services/storage.js';
 import {
   compileFirmware,
   normalizeLibraries,
@@ -37,6 +37,115 @@ async function loadAgentHeader() {
 
 router.get('/api/hardware-components', asyncRoute(async (_req, res) => {
   return res.json({ components: listHardwareComponents() });
+}));
+
+router.post('/api/compile/recompile', asyncRoute(async (req, res) => {
+  const { jobId: compileJobId, source, board, webCompanion, libraries, libDeps, components } = req.body || {};
+
+  if (!compileJobId || typeof compileJobId !== 'string') {
+    return res.status(400).json({ error: '"jobId" is required for recompile' });
+  }
+  if (!source || typeof source !== 'string' || source.trim().length === 0) {
+    return res.status(400).json({ error: '"source" (C++ string) is required' });
+  }
+
+  const existingJob = await getJob(compileJobId);
+  if (!existingJob) {
+    return res.status(404).json({ error: `Job ${compileJobId} not found` });
+  }
+
+  const targetBoard = typeof board === 'string' && ALLOWED_BOARDS.has(board.toLowerCase()) ? board.toLowerCase() : existingJob.board || 'esp32';
+  const boardInfo = resolveBoard(targetBoard);
+   const platformId = (boardInfo?.platform.id) ?? (existingJob.platform || 'esp32');
+
+  let resolvedLibs;
+  let componentList = [];
+  try {
+    componentList = Array.isArray(components) ? components.filter((c) => typeof c === 'string' && c.trim()).map((c) => c.trim()) : [];
+    const explicit = normalizeLibraries(libraries ?? libDeps);
+    const fromComponents = librariesForComponents(componentList);
+    const inferred = inferLibrariesFromSource(source);
+    resolvedLibs = mergeLibraries(explicit, [...fromComponents, ...inferred]);
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
+
+  if (req.userId) {
+    recordAgentConnection({ userId: req.userId, clientName: 'Claude / MCP Agent', email: req.userEmail || null });
+  }
+
+  const companionRequired = await getPreference(req.userId, 'webCompanion', false);
+  if (companionRequired && (!webCompanion || typeof webCompanion !== 'string' || webCompanion.trim().length === 0)) {
+    return res.status(400).json({ error: 'Web Companion required.' });
+  }
+
+  const wantsAgent = componentList.some((c) => /chip[-_]?agent/i.test(c));
+  const linksAgent = /chip_?agent/i.test(source);
+  let agentHeader = null;
+  let agentWarning = null;
+  if (wantsAgent) {
+    try { agentHeader = await loadAgentHeader(); } catch { agentWarning = 'Chip Agent header unavailable.'; }
+    if (!linksAgent && !agentWarning) { agentWarning = 'components requested "chip-agent" but the source never references it.'; }
+  }
+
+  const prevSource = existingJob.sourceCode ?? '';
+  const revCount = existingJob.revisions?.length ?? (prevSource ? 1 : 0);
+  appendCodeRevision(compileJobId, { source, author: 'claude', summary: `Recompiled rev ${revCount + 1}` }).catch(() => {});
+  updateJob(compileJobId, {
+    sourceCode: source, board: targetBoard, platform: platformId,
+    libraries: resolvedLibs, components: componentList,
+    webCompanion: typeof webCompanion === 'string' ? webCompanion : null,
+    status: 'compiling', progress: 0,
+    log: ['Recompile job started…'],
+  });
+
+  console.log(`[RECOMPILE] Job ${compileJobId} started — board: ${targetBoard}`);
+
+  try {
+    const result = await compileFirmware({
+      source, board: targetBoard, libraries: resolvedLibs, components: componentList,
+      jobId: compileJobId, agentHeader,
+      onLog: (line) => { updateJob(compileJobId, { logLine: line }); },
+    });
+
+    updateJob(compileJobId, {
+      status: 'done', progress: 100,
+      binBase64: result.binBase64, binSize: result.binSize,
+      offset: result.offset || '0x0', filename: result.filename || `firmware_${targetBoard}.bin`,
+      platform: result.platformId || platformId, artifact: result.artifact || 'bin',
+      sourceCode: source, libraries: resolvedLibs,
+      webCompanion: typeof webCompanion === 'string' ? webCompanion : null,
+      otaSha256: result.otaSha256, otaSize: result.otaSize,
+      logLine: `Done — ${result.binSize} bytes in ${(result.durationMs / 1000).toFixed(1)}s`,
+    });
+
+    try { await mkdir(join(homedir(), '.chip-build-cache'), { recursive: true }); await writeFile(FIRMWARE_B64_CACHE, result.binBase64, 'utf8'); } catch {}
+
+    console.log(`[RECOMPILE] Job ${compileJobId} done — ${result.binSize} bytes`);
+
+    return res.json({
+      jobId: compileJobId, status: 'done', binBase64: result.binBase64,
+      binSize: result.binSize, offset: result.offset || '0x0',
+      filename: result.filename || `firmware_${targetBoard}.bin`,
+      artifact: result.artifact || 'bin', platform: result.platformId || platformId,
+      board: targetBoard, durationMs: result.durationMs, libraries: resolvedLibs,
+      log: result.log, otaAvailable: !!result.otaSha256,
+      otaSha256: result.otaSha256, otaSize: result.otaSize,
+      ...(agentWarning ? { agentWarning } : {}),
+    });
+  } catch (err) {
+    const isLibError = err instanceof LibraryResolveError || err.code === 'LIBRARY_RESOLVE';
+    const isNetError = err instanceof LibraryNetworkError || err.code === 'LIBRARY_NETWORK';
+    const isOom = err.code === 'COMPILE_OOM';
+    const errorCode = isLibError ? 'LIBRARY_RESOLVE' : isNetError ? 'LIBRARY_NETWORK' : isOom ? 'COMPILE_OOM' : 'COMPILE_FAILED';
+    const clientError = (isLibError || isNetError || isOom) ? err.message : 'Firmware compilation failed.';
+    const status = (isLibError || isNetError || isOom) ? 400 : 500;
+
+    updateJob(compileJobId, { status: 'error', error: err.message, errorCode, logLine: `Error: ${err.message}` });
+    console.error(`[RECOMPILE] Job ${compileJobId} failed:`, err.message);
+
+    return res.status(status).json({ jobId: compileJobId, status: 'error', error: clientError, errorCode, log: err.log ?? undefined });
+  }
 }));
 
 router.post('/api/compile', asyncRoute(async (req, res) => {
