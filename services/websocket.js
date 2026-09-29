@@ -39,6 +39,9 @@ export function setupWebSocket(server) {
     let deviceId = 'default_device';
     ws.isAlive = true;
     ws.userId = null;
+    ws.boardConnected = true;
+    ws.chip = null;
+    ws.board = null;
 
     try {
       const url = new URL(req.url, 'http://localhost');
@@ -65,6 +68,9 @@ export function setupWebSocket(server) {
           if (deviceSockets.get(deviceId) === ws) deviceSockets.delete(deviceId);
           deviceId = data.deviceId || 'default_device';
           ws.userId = data.userId || data.uid || ws.userId || null;
+          ws.boardConnected = data.connected !== false;
+          ws.chip = typeof data.chip === 'string' ? data.chip : null;
+          ws.board = typeof data.board === 'string' ? data.board : null;
           deviceSockets.set(deviceId, ws);
           sendJson(ws, { type: 'registered', deviceId, status: 'ok' });
           return;

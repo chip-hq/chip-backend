@@ -23,6 +23,7 @@ import flashRouter from './routes/flash.js';
 import preferencesRouter from './routes/preferences.js';
 import platformsRouter from './routes/platforms.js';
 import codeRouter from './routes/code.js';
+import connectionRouter from './routes/connection.js';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -122,6 +123,7 @@ app.use('/api/preferences', generalApiLimiter);
 app.use(preferencesRouter);
 app.use(platformsRouter);
 app.use(codeRouter);
+app.use(connectionRouter);
 
 app.use(notFoundHandler);
 app.use(errorHandler);
