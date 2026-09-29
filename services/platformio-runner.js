@@ -351,6 +351,7 @@ export async function compileFirmware({
   onLog = () => {},
   timeout = 300_000,
   agentHeader = null,
+  wifiConfig = null,
 } = {}) {
   const resolved = resolveBoard(board) ?? resolveBoard('esp32');
   const platform = resolved.platform;
@@ -415,9 +416,19 @@ export async function compileFirmware({
     emit('[COMPILE] Chip Agent header linked (chip_agent.h) — realtime + OTA client available to the sketch.');
   }
 
-  const preparedSource = source.includes('Arduino.h')
-    ? source
-    : `#include <Arduino.h>\n${source}`;
+  if (platform.id === 'esp32' && wifiConfig?.mode && wifiConfig.mode !== 'disabled') {
+    const { wifiConfigHeader } = await import('./wifi-config.js');
+    await writeFile(join(srcDir, 'chip_wifi_config.h'), wifiConfigHeader(wifiConfig), 'utf8');
+    emit(`[COMPILE] WiFi mode injected: ${wifiConfig.mode}`);
+  }
+
+  const wifiBuildSource = platform.id === 'esp32' && wifiConfig?.mode && wifiConfig.mode !== 'disabled'
+    ? source.replace(/^\s*#define\s+CHIP_WIFI_(?:SSID|PASS|PASSWORD)\s+.*$/gm, '')
+    : source;
+  const wifiInclude = platform.id === 'esp32' && wifiConfig?.mode && wifiConfig.mode !== 'disabled'
+    ? '#include "chip_wifi_config.h"\n'
+    : '';
+  const preparedSource = `${wifiInclude}${wifiBuildSource.includes('Arduino.h') ? wifiBuildSource : `#include <Arduino.h>\n${wifiBuildSource}`}`;
 
   await writeFile(join(srcDir, 'main.cpp'), preparedSource, 'utf8');
 

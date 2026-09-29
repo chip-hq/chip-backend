@@ -20,6 +20,7 @@ import {
 import { deviceSockets } from '../services/websocket.js';
 import { resolveUserId } from '../services/user-resolver.js';
 import { asyncRoute } from '../middleware/errorHandler.js';
+import { getWifiConfig } from '../services/wifi-config.js';
 
 const router = Router();
 
@@ -57,6 +58,8 @@ router.post('/api/compile/recompile', asyncRoute(async (req, res) => {
   const targetBoard = typeof board === 'string' && ALLOWED_BOARDS.has(board.toLowerCase()) ? board.toLowerCase() : existingJob.board || 'esp32';
   const boardInfo = resolveBoard(targetBoard);
    const platformId = (boardInfo?.platform.id) ?? (existingJob.platform || 'esp32');
+  const compileUserId = await resolveUserId(req);
+  const wifiConfig = getWifiConfig(compileUserId);
 
   let resolvedLibs;
   let componentList = [];
@@ -104,7 +107,7 @@ router.post('/api/compile/recompile', asyncRoute(async (req, res) => {
   try {
     const result = await compileFirmware({
       source, board: targetBoard, libraries: resolvedLibs, components: componentList,
-      jobId: compileJobId, agentHeader,
+      jobId: compileJobId, agentHeader, wifiConfig,
       onLog: (line) => { updateJob(compileJobId, { logLine: line }); },
     });
 
@@ -165,6 +168,8 @@ router.post('/api/compile', asyncRoute(async (req, res) => {
     : 'esp32';
   const boardInfo = resolveBoard(board);
   const platformId = boardInfo?.platform.id ?? 'esp32';
+  const compileUserId = await resolveUserId(req);
+  const wifiConfig = getWifiConfig(compileUserId);
 
   let resolvedLibs;
   let componentList = [];
@@ -262,6 +267,7 @@ router.post('/api/compile', asyncRoute(async (req, res) => {
       components: componentList,
       jobId,
       agentHeader,
+      wifiConfig,
       onLog: (line) => {
         updateJob(jobId, { logLine: line });
       },
