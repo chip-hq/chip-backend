@@ -131,6 +131,7 @@ router.post('/api/compile/recompile', asyncRoute(async (req, res) => {
       filename: result.filename || `firmware_${targetBoard}.bin`,
       artifact: result.artifact || 'bin', platform: result.platformId || platformId,
       board: targetBoard, durationMs: result.durationMs, libraries: resolvedLibs,
+      wifiMode: wifiConfig.mode,
       log: result.log,
       ...(agentWarning ? { agentWarning } : {}),
     });
@@ -309,6 +310,7 @@ router.post('/api/compile', asyncRoute(async (req, res) => {
       board,
       durationMs: result.durationMs,
       libraries: resolvedLibs,
+      wifiMode: wifiConfig.mode,
       log: result.log,
       ...(agentWarning ? { agentWarning } : {}),
     });
