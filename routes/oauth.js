@@ -5,13 +5,11 @@ import { recordAgentConnection, disconnectAgent, getDb, isDbConnected } from '..
 
 const router = Router();
 
-const SESSION_SECRET = process.env.SESSION_SECRET || 'd84f391b8a1c97efb99e74281350a41f6c770514930364d2719a6ee01e9d892a';
-const CANDIDATE_SECRETS = Array.from(new Set([
-  process.env.SESSION_SECRET,
-  'd84f391b8a1c97efb99e74281350a41f6c770514930364d2719a6ee01e9d892a',
-  'chip-dev-secret-change-in-production',
-  'chip-shared-oauth-secret-2026-production',
-].filter(Boolean)));
+if (process.env.NODE_ENV === 'production' && !process.env.SESSION_SECRET) {
+  throw new Error('SESSION_SECRET must be set in production');
+}
+const SESSION_SECRET = process.env.SESSION_SECRET || 'chip-local-development-secret-only';
+const CANDIDATE_SECRETS = [SESSION_SECRET];
 
 const registeredClients = new Map();
 const pendingCodes = new Map();
@@ -159,14 +157,7 @@ export function verifyJWT(token) {
   const payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'));
   if (payload.exp && Math.floor(Date.now() / 1000) > payload.exp) throw new Error('Token expired');
 
-  if (!valid) {
-    // If payload contains codeChallenge or redirectUri, allow it through (protected by PKCE)
-    if (payload.userId || payload.redirectUri) {
-      console.log('[OAuth] Token verified via PKCE signature fallback');
-      return payload;
-    }
-    throw new Error('Invalid token signature');
-  }
+  if (!valid) throw new Error('Invalid token signature');
 
   return payload;
 }
@@ -246,12 +237,24 @@ router.get('/oauth/authorize', asyncRoute(async (req, res) => {
     code_challenge_method = 'S256',
   } = req.query;
 
+  if (!client_id || typeof client_id !== 'string') {
+    return res.status(400).send('Missing client_id');
+  }
+  const client = registeredClients.get(client_id);
+  if (!client) {
+    return res.status(400).send('Unknown client_id');
+  }
   if (!redirect_uri || typeof redirect_uri !== 'string') {
     return res.status(400).send('Missing redirect_uri');
   }
+  if (!client.redirect_uris.includes(redirect_uri)) {
+    return res.status(400).send('redirect_uri is not registered for this client');
+  }
 
   try {
-    new URL(redirect_uri);
+    const parsed = new URL(redirect_uri);
+    const localHttp = parsed.protocol === 'http:' && /^(localhost|127\.0\.0\.1|\[::1\])$/i.test(parsed.hostname);
+    if (parsed.protocol !== 'https:' && !localHttp) throw new Error('HTTPS redirect required');
   } catch {
     return res.status(400).send('Invalid redirect_uri format');
   }
@@ -284,21 +287,15 @@ router.post('/oauth/finalize', express.json(), asyncRoute(async (req, res) => {
     return res.status(400).json({ error: 'Missing idToken' });
   }
 
-  let session = await getOAuthSession(sessionId);
+  const session = await getOAuthSession(sessionId);
   if (!session || (session.expires && session.expires < Date.now()) || (session.exp && session.exp < Math.floor(Date.now() / 1000))) {
-    const rawRedirect = redirect_uri || req.body?.redirectUri;
-    if (rawRedirect && typeof rawRedirect === 'string') {
-      session = {
-        clientId: client_id || null,
-        redirectUri: String(rawRedirect),
-        state: state ? String(state) : '',
-        codeChallenge: code_challenge || null,
-        codeChallengeMethod: code_challenge_method || 'S256',
-        expires: Date.now() + 15 * 60 * 1000,
-      };
-    } else {
-      return res.status(400).json({ error: 'Session expired or invalid. Please try connecting again.' });
-    }
+    return res.status(400).json({ error: 'Session expired or invalid. Please try connecting again.' });
+  }
+  if (redirect_uri && redirect_uri !== session.redirectUri) {
+    return res.status(400).json({ error: 'redirect_uri does not match the authorization session' });
+  }
+  if (client_id && client_id !== session.clientId) {
+    return res.status(400).json({ error: 'client_id does not match the authorization session' });
   }
 
   let firebaseUid, email;

@@ -12,7 +12,7 @@ import cors from 'cors';
 import { rateLimit } from 'express-rate-limit';
 import { createServer } from 'http';
 import { initStorage, closeStorage, isDbConnected } from './services/storage.js';
-import { extractUser } from './middleware/auth.js';
+import { extractUser, requireAuthenticated } from './middleware/auth.js';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
 import oauthRouter, { verifyJWT } from './routes/oauth.js';
 import { setupWebSocket, deviceSockets } from './services/websocket.js';
@@ -98,6 +98,7 @@ app.use((req, res, next) => {
       const payload = verifyJWT(token);
       req.userId = payload.sub;
       req.userEmail = payload.email;
+      req.authenticated = true;
       return next();
     } catch {
       // Fall through to extractUser
@@ -116,9 +117,9 @@ app.get('/health', (req, res) => {
 });
 
 app.use(jobsRouter);
-app.use('/api/compile', compileLimiter);
+app.use('/api/compile', requireAuthenticated, compileLimiter);
 app.use(compileRouter);
-app.use('/api/flash', flashLimiter);
+app.use('/api/flash', requireAuthenticated, flashLimiter);
 app.use(flashRouter);
 app.use('/api/preferences', generalApiLimiter);
 app.use(preferencesRouter);

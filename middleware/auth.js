@@ -1,6 +1,9 @@
 import { createHmac } from 'crypto';
 
-const SESSION_SECRET = process.env.SESSION_SECRET || 'chip-dev-secret-change-in-production';
+if (process.env.NODE_ENV === 'production' && !process.env.SESSION_SECRET) {
+  throw new Error('SESSION_SECRET must be set in production');
+}
+const SESSION_SECRET = process.env.SESSION_SECRET || 'chip-local-development-secret-only';
 
 if (!process.env.SESSION_SECRET) {
   console.warn('[auth] WARNING: SESSION_SECRET env var is not set. Using insecure default — set this in production!');
@@ -46,6 +49,7 @@ function decodeFirebasePayload(token) {
 }
 
 export function extractUser(req, res, next) {
+  req.authenticated = false;
   try {
     const authHeader = req.headers.authorization;
     const directUserId = req.headers['x-user-id'] || req.query?.userId || req.body?.userId;
@@ -59,6 +63,7 @@ export function extractUser(req, res, next) {
           const uid = chipPayload.sub || chipPayload.user_id;
           if (uid) {
             req.userId = String(uid);
+            req.authenticated = true;
             req.userEmail = chipPayload.email || null;
             req.tokenPayload = chipPayload; // expose for downstream agent detection
             return next();
@@ -70,12 +75,14 @@ export function extractUser(req, res, next) {
         const uid = firebasePayload?.sub || firebasePayload?.user_id;
         if (uid) {
           req.userId = String(uid);
+          req.authenticated = true;
           req.userEmail = firebasePayload?.email || null;
           return next();
         }
 
         // 3. Last resort: treat raw token string as opaque user id
         req.userId = token;
+        req.authenticated = true;
         return next();
       }
     }
@@ -88,4 +95,11 @@ export function extractUser(req, res, next) {
   }
 
   next();
+}
+
+export function requireAuthenticated(req, res, next) {
+  if (!req.authenticated || !req.userId) {
+    return res.status(401).json({ error: 'Authentication required' });
+  }
+  return next();
 }

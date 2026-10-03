@@ -130,13 +130,18 @@ export function normalizeLibraries(libraries) {
     if (/[\r\n;#]/.test(trimmed)) {
       throw new Error(`Invalid library name (contains forbidden characters): ${JSON.stringify(item)}`);
     }
-    // Block path-like / shell-ish injection while still allowing owner/name and https git URLs
+    // Only accept PlatformIO Registry names. Never pass arbitrary URLs or VCS
+    // locations to PlatformIO from an API request: dependency resolution is a
+    // server-side network operation and must not become an SSRF primitive.
     if (
       trimmed.includes('..')
       || /^[A-Za-z]:/.test(trimmed)
       || trimmed.startsWith('/')
       || trimmed.startsWith('\\')
-      || /^file:/i.test(trimmed)
+      || /:\/\//.test(trimmed)
+      || /^(?:file|git|git\+ssh|ssh|ftp):/i.test(trimmed)
+      || trimmed.length > 200
+      || !/^[A-Za-z0-9][A-Za-z0-9._ -]*(?:\/[A-Za-z0-9][A-Za-z0-9._ -]*)?(?:@[A-Za-z0-9.+^<>=~* -]+)?$/.test(trimmed)
     ) {
       throw new Error(`Invalid library name (paths are not allowed): ${JSON.stringify(item)}`);
     }
