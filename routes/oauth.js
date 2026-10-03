@@ -267,6 +267,33 @@ router.post('/oauth/register', express.json(), asyncRoute(async (req, res) => {
   });
 }));
 
+router.get('/oauth/register/:clientId', asyncRoute(async (req, res) => {
+  const client = await getRegisteredClient(req.params.clientId);
+  if (!client) return res.status(404).json({ error: 'invalid_client' });
+
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({
+    client_id: client.client_id,
+    client_name: client.client_name,
+    client_id_issued_at: Math.floor((client.created_at || Date.now()) / 1000),
+    client_secret_expires_at: 0,
+    redirect_uris: client.redirect_uris,
+    grant_types: ['authorization_code'],
+    response_types: ['code'],
+    token_endpoint_auth_method: 'none',
+    registration_client_uri: `${req.protocol}://${req.get('host')}/oauth/register/${client.client_id}`,
+  });
+}));
+
+router.delete('/oauth/register/:clientId', asyncRoute(async (req, res) => {
+  const clientId = req.params.clientId;
+  registeredClients.delete(clientId);
+  if (isDbConnected()) {
+    await getDb().collection('oauth_clients').deleteOne({ client_id: clientId });
+  }
+  return res.status(204).send();
+}));
+
 router.get('/oauth/authorize', asyncRoute(async (req, res) => {
   const {
     redirect_uri,
@@ -534,6 +561,5 @@ router.post('/oauth/revoke', handleRevoke);
 router.post('/oauth/token/revoke', handleRevoke);
 router.delete('/oauth/token', handleRevoke);
 router.delete('/oauth/register', handleRevoke);
-router.delete('/oauth/register/:clientId', handleRevoke);
 
 export default router;
