@@ -14,6 +14,32 @@ const CANDIDATE_SECRETS = [SESSION_SECRET];
 const registeredClients = new Map();
 const pendingCodes = new Map();
 
+async function saveRegisteredClient(clientRecord) {
+  registeredClients.set(clientRecord.client_id, clientRecord);
+  if (isDbConnected()) {
+    await getDb().collection('oauth_clients').updateOne(
+      { client_id: clientRecord.client_id },
+      { $set: clientRecord },
+      { upsert: true }
+    );
+  }
+}
+
+async function getRegisteredClient(clientId) {
+  const cached = registeredClients.get(clientId);
+  if (cached) return cached;
+
+  if (isDbConnected()) {
+    const stored = await getDb().collection('oauth_clients').findOne({ client_id: clientId });
+    if (stored) {
+      registeredClients.set(clientId, stored);
+      return stored;
+    }
+  }
+
+  return null;
+}
+
 setInterval(() => {
   const now = Date.now();
   for (const [key, val] of pendingCodes) {
@@ -203,6 +229,14 @@ router.get('/.well-known/openid-configuration', (req, res) => {
 
 router.post('/oauth/register', express.json(), asyncRoute(async (req, res) => {
   const { redirect_uris = [], client_name = 'Claude' } = req.body || {};
+
+  if (process.env.NODE_ENV === 'production' && !isDbConnected()) {
+    return res.status(503).json({
+      error: 'temporarily_unavailable',
+      error_description: 'OAuth registration storage is unavailable. Please try again shortly.',
+    });
+  }
+
   const clientId = `client_${randomBytes(16).toString('hex')}`;
   const clientSecret = `secret_${randomBytes(24).toString('hex')}`;
 
@@ -214,17 +248,22 @@ router.post('/oauth/register', express.json(), asyncRoute(async (req, res) => {
     created_at: Date.now(),
   };
 
-  registeredClients.set(clientId, clientRecord);
+  await saveRegisteredClient(clientRecord);
   console.log(`[OAuth] Dynamic client registered: ${clientRecord.client_name} (${clientId})`);
+
+  const base = `${req.protocol}://${req.get('host')}`;
 
   res.status(201).json({
     client_id: clientId,
     client_secret: clientSecret,
     client_name: clientRecord.client_name,
+    client_id_issued_at: Math.floor(Date.now() / 1000),
+    client_secret_expires_at: 0,
     redirect_uris: clientRecord.redirect_uris,
     grant_types: ['authorization_code'],
     response_types: ['code'],
     token_endpoint_auth_method: 'none',
+    registration_client_uri: `${base}/oauth/register/${clientId}`,
   });
 }));
 
@@ -240,7 +279,7 @@ router.get('/oauth/authorize', asyncRoute(async (req, res) => {
   if (!client_id || typeof client_id !== 'string') {
     return res.status(400).send('Missing client_id');
   }
-  const client = registeredClients.get(client_id);
+  const client = await getRegisteredClient(client_id);
   if (!client) {
     return res.status(400).send('Unknown client_id');
   }
@@ -261,6 +300,7 @@ router.get('/oauth/authorize', asyncRoute(async (req, res) => {
 
   const sessionData = {
     clientId: typeof client_id === 'string' ? client_id : null,
+    clientName: client.client_name,
     redirectUri: String(redirect_uri),
     state: state ? String(state) : '',
     codeChallenge: code_challenge ? String(code_challenge) : null,
@@ -314,6 +354,7 @@ router.post('/oauth/finalize', express.json(), asyncRoute(async (req, res) => {
     userId: firebaseUid,
     email,
     clientId: session.clientId,
+    clientName: session.clientName,
     redirectUri: session.redirectUri,
     codeChallenge: session.codeChallenge,
     codeChallengeMethod: session.codeChallengeMethod,
@@ -328,10 +369,11 @@ router.post('/oauth/finalize', express.json(), asyncRoute(async (req, res) => {
   const agentHint = (() => {
     const uri = (session.redirectUri || '').toLowerCase();
     const cid = (session.clientId || '').toLowerCase();
-    if (uri.includes('chatgpt') || uri.includes('openai') || cid.includes('chatgpt') || cid.includes('openai')) {
+    const name = (session.clientName || '').toLowerCase();
+    if (uri.includes('chatgpt') || uri.includes('openai') || cid.includes('chatgpt') || cid.includes('openai') || name.includes('chatgpt') || name.includes('openai')) {
       return { name: 'ChatGPT', key: 'chatgpt' };
     }
-    if (uri.includes('claude') || uri.includes('anthropic') || cid.includes('claude') || cid.includes('anthropic')) {
+    if (uri.includes('claude') || uri.includes('anthropic') || cid.includes('claude') || cid.includes('anthropic') || name.includes('claude') || name.includes('anthropic')) {
       return { name: 'Claude', key: 'claude' };
     }
     return { name: 'MCP Agent', key: session.clientId?.slice(0, 12) || 'mcpagent' };
@@ -404,11 +446,12 @@ router.post('/oauth/token', express.urlencoded({ extended: false }), express.jso
   // Derive agent name — prefer redirect_uri over clientId (client ids may be claude_* even for ChatGPT)
   const agentHint = (() => {
     const clientId = (codeData.clientId || '').toLowerCase();
+    const clientName = (codeData.clientName || '').toLowerCase();
     const redirectUri = (codeData.redirectUri || '').toLowerCase();
-    if (redirectUri.includes('chatgpt') || redirectUri.includes('openai') || clientId.includes('chatgpt') || clientId.includes('openai')) {
+    if (redirectUri.includes('chatgpt') || redirectUri.includes('openai') || clientId.includes('chatgpt') || clientId.includes('openai') || clientName.includes('chatgpt') || clientName.includes('openai')) {
       return { name: 'ChatGPT', key: 'chatgpt' };
     }
-    if (redirectUri.includes('claude') || redirectUri.includes('anthropic') || clientId.includes('claude') || clientId.includes('anthropic')) {
+    if (redirectUri.includes('claude') || redirectUri.includes('anthropic') || clientId.includes('claude') || clientId.includes('anthropic') || clientName.includes('claude') || clientName.includes('anthropic')) {
       return { name: 'Claude', key: 'claude' };
     }
     return { name: 'MCP Agent', key: clientId.slice(0, 12) || 'mcpagent' };
