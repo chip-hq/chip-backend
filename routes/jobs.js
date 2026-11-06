@@ -56,7 +56,7 @@ router.patch('/api/jobs/:jobId/status', asyncRoute(async (req, res) => {
 router.get('/api/jobs/:jobId/download', asyncRoute(async (req, res) => {
   const { jobId } = req.params;
   const job = await getJob(jobId);
-  if (!job || !job.binBase64) {
+  if (!job.binBase64) {
     return res.status(404).json({ error: 'Binary file not found for this job' });
   }
   const buffer = Buffer.from(job.binBase64, 'base64');
