@@ -16,6 +16,7 @@ import { extractUser, requireAuthenticated } from './middleware/auth.js';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
 import oauthRouter, { verifyJWT } from './routes/oauth.js';
 import { setupWebSocket, deviceSockets } from './services/websocket.js';
+import { startHeartbeat, reportError, urchinErrorHandler } from './urchin.js';
 
 import jobsRouter from './routes/jobs.js';
 import compileRouter from './routes/compile.js';
@@ -129,6 +130,7 @@ app.use(connectionRouter);
 app.use(wifiConfigRouter);
 
 app.use(notFoundHandler);
+app.use(urchinErrorHandler);
 app.use(errorHandler);
 
 const server = createServer(app);
@@ -138,6 +140,7 @@ await initStorage();
 
 server.listen(PORT, () => {
   console.log(`Chip Backend running on port ${PORT}`);
+  startHeartbeat();
 });
 
 async function shutdown(signal) {
@@ -152,9 +155,9 @@ process.on('SIGTERM', () => shutdown('SIGTERM'));
 // Catch unhandled errors so crashes are visible instead of silent
 process.on('uncaughtException', (err) => {
   console.error('[FATAL] Uncaught exception:', err);
-  process.exit(1);
+  reportError(err, 'uncaughtException').finally(() => process.exit(1));
 });
 process.on('unhandledRejection', (reason) => {
   console.error('[FATAL] Unhandled promise rejection:', reason);
-  process.exit(1);
+  reportError(reason, 'unhandledRejection').finally(() => process.exit(1));
 });

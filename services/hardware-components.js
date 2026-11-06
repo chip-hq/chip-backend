@@ -109,6 +109,22 @@ export const HARDWARE_COMPONENTS = [
     notes: '',
   },
   {
+    id: 'nfc-rc522',
+    name: 'RC522 / MFRC522 NFC reader (13.56 MHz, SPI)',
+    aliases: ['rc522', 'mfrc522', 'rfid', 'nfc'],
+    libraries: ['miguelbalboa/MFRC522'],
+    headers: ['MFRC522.h'],
+    notes: 'Open-source MIT driver (miguelbalboa/MFRC522). Used by the ChipHQ NFC firmware generator.',
+  },
+  {
+    id: 'nfc-pn532',
+    name: 'PN532 NFC reader',
+    aliases: ['pn532'],
+    libraries: ['adafruit/Adafruit PN532'],
+    headers: ['Adafruit_PN532.h', 'Adafruit_PN532_SPI.h'],
+    notes: 'Open-source Adafruit driver for the PN532.',
+  },
+  {
     id: 'servo',
     name: 'Hobby servo motor',
     aliases: ['servo'],
