@@ -9,8 +9,6 @@ const router = Router();
  * status, flashing package, and board slugs. The dashboard renders the
  * platform cards and picks the right flashing package from this.
  */
-router.get('/api/platforms', asyncRoute(async (_req, res) => {
-  res.json({ count: listPlatforms().length, platforms: listPlatforms() });
-}));
+
 
 export default router;

@@ -41,7 +41,6 @@ router.patch('/api/jobs/:jobId/status', asyncRoute(async (req, res) => {
   const { jobId } = req.params;
   const { status, progress, error } = req.body || {};
   const job = await getJob(jobId);
-  if (!job) return res.status(404).json({ error: 'Job not found' });
 
   updateJob(jobId, {
     status: status || job.status,
