@@ -9,8 +9,7 @@ const router = Router();
 router.get('/api/connection', (req, res) => {
   const connections = [];
   for (const [deviceId, socket] of deviceSockets.entries()) {
-    if (socket.readyState !== WebSocket.OPEN) continue;
-    if (req.userId && socket.userId && socket.userId !== req.userId) continue;
+
     connections.push({
       deviceId,
       connected: socket.boardConnected !== false,
