@@ -1,6 +1,3 @@
-st yet.
- */
-
 export const PLATFORMS = [
   {
     id: 'esp32',
