@@ -18,7 +18,7 @@ router.get('/api/connection', (req, res) => {
       transport: 'usb',
     });
   }
-  res.json({ connected: connections });
+  res.json({ connected: connections.some((item) => item.connected), connections });
 });
 
 export default router;

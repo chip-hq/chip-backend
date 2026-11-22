@@ -1,4 +1,17 @@
-st yet.
+/**
+ * Chip — hardware platform registry.
+ *
+ * Every chip family flashes with its OWN package, the way ESP32 uses
+ * Espressif's esptool. This registry is the single source of truth (backend
+ * and dashboard mirror it) for:
+ *  - which platforms exist and their support status,
+ *  - which flashing package/protocol each supported platform uses,
+ *  - how to recognise a plugged-in board (esptool chip name, USB VID/PID),
+ *  - which PlatformIO target each board slug compiles to.
+ *
+ * Support ladder per platform: 'supported' (compile + flash in Chip today)
+ * → 'coming-soon' (recognised, roadmap). Nothing here claims support that
+ * doesn't exist yet.
  */
 
 export const PLATFORMS = [
