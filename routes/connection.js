@@ -4,8 +4,7 @@ import { deviceSockets } from '../services/websocket.js';
 
 const router = Router();
 
-// Read-only USB relay status for MCP clients. This is intentionally narrower
-// than the removed Fleet/device API.
+
 router.get('/api/connection', (req, res) => {
   const connections = [];
   for (const [deviceId, socket] of deviceSockets.entries()) {
@@ -19,7 +18,7 @@ router.get('/api/connection', (req, res) => {
       transport: 'usb',
     });
   }
-  res.json({ connected: connections.some((item) => item.connected), connections });
+  res.json({ connected: connections });
 });
 
 export default router;
